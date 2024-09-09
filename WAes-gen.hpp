@@ -11,7 +11,7 @@ enum class Padding
 	PKCS7,
 };
 
-template <int N> struct aesN;
+template <int> struct aesN;
 template <> struct aesN<128> { enum { Nk = 4, Nr = 10 }; };
 template <> struct aesN<192> { enum { Nk = 6, Nr = 12 }; };
 template <> struct aesN<256> { enum { Nk = 8, Nr = 14 }; };
@@ -70,38 +70,34 @@ public:
 		memcpy(m_iv, counter, length > 16 ? 16 : length);
 	}
 
-	uint8_t* Cipher(const void* in, size_t inLength, void* out, size_t& outLength) const
+	size_t Cipher(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
-		auto* input = reinterpret_cast<const uint8_t*>(in);
-		auto* output = reinterpret_cast<uint8_t*>(out);
 		switch (m_mode)
 		{
 		case Mode::ECB:
-			return cipherECB(input, inLength, output, outLength);
+			return cipherECB(in, inLength, out, outLength);
 		case Mode::CBC:
-			return cipherCBC(input, inLength, output, outLength);
+			return cipherCBC(in, inLength, out, outLength);
 		case Mode::CTR:
-			return cipherCTR(input, inLength, output, outLength);
+			return cipherCTR(in, inLength, out, outLength);
 		}
 
-		return nullptr;
+		return 0;
 	}
 
-	void* InvCipher(const void* in, size_t inLength, void* out, size_t& outLength) const
+	size_t InvCipher(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
-		auto* input = reinterpret_cast<const uint8_t*>(in);
-		auto* output = reinterpret_cast<uint8_t*>(out);
 		switch (m_mode)
 		{
 		case Mode::ECB:
-			return invCipherECB(input, inLength, output, outLength);
+			return invCipherECB(in, inLength, out, outLength);
 		case Mode::CBC:
-			return invCipherCBC(input, inLength, output, outLength);
+			return invCipherCBC(in, inLength, out, outLength);
 		case Mode::CTR:
-			return cipherCTR(input, inLength, output, outLength);
+			return cipherCTR(in, inLength, out, outLength);
 		}
 
-		return nullptr;
+		return 0;
 	}
 
 private:
@@ -352,20 +348,17 @@ private:
 		return true;
 	}
 
-	uint8_t* cipherECB(const uint8_t* in, size_t inLength, uint8_t* out, size_t& outLength) const
+	size_t cipherECB(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
 		auto nNeedLen = SumCipherLength(inLength);
 		if (outLength < nNeedLen)
 		{
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
 
-		outLength = nNeedLen;
-
 		auto len = inLength;
-		auto input = in;
-		auto output = out;
+		auto input = reinterpret_cast<const uint8_t*>(in);
+		auto output = reinterpret_cast<uint8_t*>(out);
 		for (; len >= 16; len -= 16, input += 16, output += 16)
 		{
 			memcpy(output, input, 16);
@@ -379,23 +372,20 @@ private:
 
 		cipher(output);
 
-		return out;
+		return nNeedLen;
 	}
 
-	uint8_t* cipherCBC(const uint8_t* in, size_t inLength, uint8_t* out, size_t& outLength) const
+	size_t cipherCBC(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
 		auto nNeedLen = SumCipherLength(inLength);
 		if (outLength < nNeedLen)
 		{
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
 
-		outLength = nNeedLen;
-
 		auto len = inLength;
-		auto input = in;
-		auto output = out;
+		auto input = reinterpret_cast<const uint8_t*>(in);
+		auto output = reinterpret_cast<uint8_t*>(out);
 		const auto* piv = m_iv;
 		for (; len >= 16; len -= 16, input += 16, output += 16)
 		{
@@ -421,18 +411,15 @@ private:
 
 		cipher(output);
 
-		return out;
+		return nNeedLen;
 	}
 
-	uint8_t* cipherCTR(const uint8_t* in, size_t inLength, uint8_t* out, size_t& outLength) const
+	size_t cipherCTR(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
 		if (outLength < inLength)
 		{
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
-
-		outLength = inLength;
 
 		uint8_t counter[16];
 		memcpy(counter, m_iv, 16);
@@ -454,8 +441,8 @@ private:
 
 		uint8_t state[4 * Nb];
 		int64_t len = inLength;
-		auto input = in;
-		auto output = out;
+		auto input = reinterpret_cast<const uint8_t*>(in);
+		auto output = reinterpret_cast<uint8_t*>(out);
 
 		for (; len > 0; len -= 16, input += 16, output += 16)
 		{
@@ -471,20 +458,18 @@ private:
 			addCounter();
 		}
 
-		return out;
+		return inLength;
 	}
 
-	void* invCipherECB(const uint8_t* in, size_t inLength, uint8_t* out, size_t& outLength) const
+	size_t invCipherECB(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
 		if (inLength % 16)// invalid data length
 		{
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
 
 		uint8_t state[4 * Nb];
-
-		auto input = in + inLength - 16;
+		auto input = reinterpret_cast<const uint8_t*>(in) + inLength - 16;
 
 		// sum padding length
 		memcpy(state, input, 16);
@@ -496,7 +481,10 @@ private:
 			padLen = 0;
 			for (int8_t i = 15; i >= 0; --i)
 			{
-				if (state[i]) goto END_SUM;
+				if (state[i])
+				{
+					break;
+				}
 				++padLen;
 			}
 		}
@@ -504,47 +492,40 @@ private:
 		{
 			if (!isValidPKCS7Padding(state))
 			{
-				outLength = 0;
-				return nullptr;
+				return 0;
 			}
 			padLen = state[15];
 		}
 
-	END_SUM:
 		if (outLength < inLength - padLen)
 		{
 			// out buffer too small
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
 
 		outLength = inLength - padLen;
 		uint8_t endLen = outLength % 16;
-		auto output = out + inLength - 16;
+		auto output = reinterpret_cast<uint8_t*>(out) + inLength - 16;
 
 		memcpy(output, state, endLen);
-
 		for (input -= 16, output -= 16; input >= in; input -= 16, output -= 16)
 		{
 			memcpy(output, input, 16);
-
 			invCipher(output);
 		}
 
-		return out;
+		return outLength;
 	}
 
-	void* invCipherCBC(const uint8_t* in, size_t inLength, uint8_t* out, size_t& outLength) const
+	size_t invCipherCBC(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
 		if (inLength % 16)// invalid data length
 		{
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
 
 		uint8_t state[4 * Nb];
-
-		auto input = in + inLength - 16;
+		auto input = reinterpret_cast<const uint8_t*>(in) + inLength - 16;
 
 		// sum padding length
 		memcpy(state, input, 16);
@@ -562,7 +543,10 @@ private:
 			padLen = 0;
 			for (int8_t i = 15; i >= 0; --i)
 			{
-				if (state[i]) goto END_SUM;
+				if (state[i])
+				{
+					break;
+				}
 				++padLen;
 			}
 		}
@@ -570,30 +554,25 @@ private:
 		{
 			if (!isValidPKCS7Padding(state))
 			{
-				outLength = 0;
-				return nullptr;
+				return 0;
 			}
 			padLen = state[15];
 		}
 
-	END_SUM:
 		if (outLength < inLength - padLen)
 		{
 			// out buffer too small
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
 
 		outLength = inLength - padLen;
 		uint8_t endLen = outLength % 16;
-		auto output = out + inLength - 16;
+		auto output = reinterpret_cast<uint8_t*>(out) + inLength - 16;
 
 		memcpy(output, state, endLen);
-
 		for (input -= 16, output -= 16; input >= in; input -= 16, output -= 16)
 		{
 			memcpy(output, input, 16);
-
 			invCipher(output);
 
 			piv = in != input ? input - 16 : m_iv;
@@ -603,7 +582,7 @@ private:
 			}
 		}
 
-		return out;
+		return outLength;
 	}
 };
 

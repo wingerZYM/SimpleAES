@@ -119,7 +119,7 @@ inline uint8x16_t _vaeskeygenassist_u8(uint8x16_t a, const uint8_t rcon) {
 
 }  // namespace
 
-template <int N>
+template <int>
 struct aesN;
 template <>
 struct aesN<128> {
@@ -239,8 +239,8 @@ struct aesN<256> {
 template <int N>
 class CWAes {
  public:
-  // If |iv| is null, mode is ECB; |iv| not be null, mode is CBC; if it is CTR, after set counter.
-  // CTR mode must be NonePadding!
+  // If |iv| is null, mode is ECB; |iv| not be null, mode is CBC; if it is CTR,
+  // after set counter. CTR mode must be NonePadding!
   CWAes(const void* key,
         size_t keyLength,
         const void* iv = nullptr,
@@ -276,15 +276,15 @@ class CWAes {
     return (nInLen / (4 * Nb) + 1) * (4 * Nb);
   }
 
-  // Sets the counter value when in CBC mode. 
+  // Sets the counter value when in CBC mode.
   // The maximum length is 16 byte, if not enough padding zero.
   void SetIV(const void* iv, size_t length) {
-      m_mode = Mode::CBC;
-      memset(&m_iv, 0, sizeof(m_iv));
-      memcpy(&m_iv, iv, length > 16 ? 16 : length);
+    m_mode = Mode::CBC;
+    memset(&m_iv, 0, sizeof(m_iv));
+    memcpy(&m_iv, iv, length > 16 ? 16 : length);
   }
 
-  // Sets the counter value when in CTR mode. 
+  // Sets the counter value when in CTR mode.
   // The maximum length is 16 byte, if not enough padding zero.
   void SetCounter(const void* counter, size_t length) {
     m_mode = Mode::CTR;
@@ -292,40 +292,36 @@ class CWAes {
     memcpy(&m_iv, counter, length > 16 ? 16 : length);
   }
 
-  uint8_t* Cipher(const void* in,
-                  size_t inLength,
-                  void* out,
-                  size_t& outLength) const {
-    auto* input = reinterpret_cast<const uint8_t*>(in);
-    auto* output = reinterpret_cast<uint8_t*>(out);
+  size_t Cipher(const void* in,
+                size_t inLength,
+                void* out,
+                size_t outLength) const {
     switch (m_mode) {
       case Mode::ECB:
-        return cipherECB(input, inLength, output, outLength);
+        return cipherECB(in, inLength, out, outLength);
       case Mode::CBC:
-        return cipherCBC(input, inLength, output, outLength);
+        return cipherCBC(in, inLength, out, outLength);
       case Mode::CTR:
-        return cipherCTR(input, inLength, output, outLength);
+        return cipherCTR(in, inLength, out, outLength);
     }
 
-    return nullptr;
+    return 0;
   }
 
-  void* InvCipher(const void* in,
-                  size_t inLength,
-                  void* out,
-                  size_t& outLength) const {
-    auto* input = reinterpret_cast<const uint8_t*>(in);
-    auto* output = reinterpret_cast<uint8_t*>(out);
+  size_t InvCipher(const void* in,
+                   size_t inLength,
+                   void* out,
+                   size_t outLength) const {
     switch (m_mode) {
       case Mode::ECB:
-        return invCipherECB(input, inLength, output, outLength);
+        return invCipherECB(in, inLength, out, outLength);
       case Mode::CBC:
-        return invCipherCBC(input, inLength, output, outLength);
+        return invCipherCBC(in, inLength, out, outLength);
       case Mode::CTR:
-        return cipherCTR(input, inLength, output, outLength);
+        return cipherCTR(in, inLength, out, outLength);
     }
 
-    return nullptr;
+    return 0;
   }
 
  private:
@@ -372,22 +368,19 @@ class CWAes {
     return true;
   }
 
-  uint8_t* cipherECB(const uint8_t* in,
-                     size_t inLength,
-                     uint8_t* out,
-                     size_t& outLength) const {
+  size_t cipherECB(const void* in,
+                   size_t inLength,
+                   void* out,
+                   size_t outLength) const {
     auto nNeedLen = SumCipherLength(inLength);
     if (outLength < nNeedLen) {
-      outLength = 0;
-      return nullptr;
+      return 0;
     }
-
-    outLength = nNeedLen;
 
     uint8x16_t state;
     auto len = inLength;
-    auto input = in;
-    auto output = out;
+    auto input = reinterpret_cast<const uint8_t*>(in);
+    auto output = reinterpret_cast<uint8_t*>(out);
     for (; len >= 16; len -= 16, input += 16, output += 16) {
       state = vld1q_u8(input);
       cipher(state);
@@ -402,24 +395,21 @@ class CWAes {
     cipher(state);
     vst1q_u8(output, state);
 
-    return out;
+    return nNeedLen;
   }
 
-  uint8_t* cipherCBC(const uint8_t* in,
-                     size_t inLength,
-                     uint8_t* out,
-                     size_t& outLength) const {
+  size_t cipherCBC(const void* in,
+                   size_t inLength,
+                   void* out,
+                   size_t outLength) const {
     auto nNeedLen = SumCipherLength(inLength);
     if (outLength < nNeedLen) {
-      outLength = 0;
-      return nullptr;
+      return 0;
     }
 
-    outLength = nNeedLen;
-
     auto len = inLength;
-    auto input = in;
-    auto output = out;
+    auto input = reinterpret_cast<const uint8_t*>(in);
+    auto output = reinterpret_cast<uint8_t*>(out);
 
     auto state = m_iv;
     for (; len >= 16; len -= 16, input += 16, output += 16) {
@@ -442,19 +432,16 @@ class CWAes {
     cipher(state);
     vst1q_u8(output, state);
 
-    return out;
+    return nNeedLen;
   }
 
-  uint8_t* cipherCTR(const uint8_t* in,
-                     size_t inLength,
-                     uint8_t* out,
-                     size_t& outLength) const {
+  size_t cipherCTR(const void* in,
+                   size_t inLength,
+                   void* out,
+                   size_t outLength) const {
     if (outLength < inLength) {
-      outLength = 0;
-      return nullptr;
+      return 0;
     }
-
-    outLength = inLength;
 
     auto counter = m_iv;
     auto addCounter = [&counter]() {
@@ -470,8 +457,8 @@ class CWAes {
     };
 
     int64_t len = inLength / 16;
-    auto input = in;
-    auto output = out;
+    auto input = reinterpret_cast<const uint8_t*>(in);
+    auto output = reinterpret_cast<uint8_t*>(out);
     for (int64_t i = 0; i < len; ++i, input += 16, output += 16) {
       auto state = counter;
       cipher(state);
@@ -491,73 +478,72 @@ class CWAes {
       }
     }
 
-    return out;
+    return inLength;
   }
 
-  void* invCipherECB(const uint8_t* in,
-                     size_t inLength,
-                     uint8_t* out,
-                     size_t& outLength) const {
+  size_t invCipherECB(const void* in,
+                      size_t inLength,
+                      void* out,
+                      size_t outLength) const {
     if (!inLength || inLength % 16)  // invalid data length
     {
-      outLength = 0;
-      return nullptr;
+      return 0;
     }
 
     auto len = static_cast<int64_t>(inLength) - 16;
+    auto input = reinterpret_cast<const uint8_t*>(in);
 
     // sum padding length
-    auto state = vld1q_u8(in + len);
+    auto state = vld1q_u8(input + len);
     invCipher(state);
 
     uint8_t padLen = 0;
     if (Padding::Zeros == m_padding) {
       for (int8_t i = 15; i >= 0; --i, ++padLen) {
-        if (reinterpret_cast<uint8_t*>(&state)[i])
+        if (reinterpret_cast<uint8_t*>(&state)[i]) {
           break;
+        }
       }
     } else {
       if (!isValidPKCS7Padding(state)) {
-        outLength = 0;
-        return nullptr;
+        return 0;
       }
       padLen = reinterpret_cast<uint8_t*>(&state)[15];
     }
 
     if (outLength < inLength - padLen) {
       // out buffer too small
-      outLength = 0;
-      return nullptr;
+      return 0;
     }
 
     outLength = inLength - padLen;
     uint8_t endLen = outLength % 16;
-    auto output = out;
+    auto output = reinterpret_cast<uint8_t*>(out);
     memcpy(output + len, reinterpret_cast<uint8_t*>(&state), endLen);
 
-    for (int i = 0; i < len; i += 16, in += 16, output += 16) {
-      state = vld1q_u8(in);
+    for (int i = 0; i < len; i += 16, input += 16, output += 16) {
+      state = vld1q_u8(input);
       invCipher(state);
       vst1q_u8(output, state);
     }
 
-    return out;
+    return outLength;
   }
 
-  void* invCipherCBC(const uint8_t* in,
-                     size_t inLength,
-                     uint8_t* out,
-                     size_t& outLength) const {
+  size_t invCipherCBC(const void* in,
+                      size_t inLength,
+                      void* out,
+                      size_t outLength) const {
     if (!inLength || inLength % 16)  // invalid data length
     {
-      outLength = 0;
-      return nullptr;
+      return 0;
     }
 
     auto len = static_cast<int64_t>(inLength) - 16;
+    auto input = reinterpret_cast<const uint8_t*>(in);
 
     // sum padding length
-    auto state = vld1q_u8(in + len);
+    auto state = vld1q_u8(input + len);
     invCipher(state);
 
     uint8x16_t iv;
@@ -571,38 +557,37 @@ class CWAes {
     uint8_t padLen = 0;
     if (Padding::Zeros == m_padding) {
       for (int8_t i = 15; i >= 0; --i, ++padLen) {
-        if (reinterpret_cast<uint8_t*>(&state)[i])
+        if (reinterpret_cast<uint8_t*>(&state)[i]) {
           break;
+        }
       }
     } else {
       if (!isValidPKCS7Padding(state)) {
-        outLength = 0;
-        return nullptr;
+        return 0;
       }
       padLen = reinterpret_cast<uint8_t*>(&state)[15];
     }
 
     if (outLength < inLength - padLen) {
       // out buffer too small
-      outLength = 0;
-      return nullptr;
+      return 0;
     }
 
     outLength = inLength - padLen;
     uint8_t endLen = outLength % 16;
-    auto output = out;
+    auto output = reinterpret_cast<uint8_t*>(out);
     memcpy(output + len, &state, endLen);
 
     iv = m_iv;
-    for (int i = 0; i < len; i += 16, in += 16, output += 16) {
-      state = vld1q_u8(in);
+    for (int i = 0; i < len; i += 16, input += 16, output += 16) {
+      state = vld1q_u8(input);
       invCipher(state);
       vst1q_u8(output, veorq_u8(state, iv));
 
-      iv = vld1q_u8(in);
+      iv = vld1q_u8(input);
     }
 
-    return out;
+    return outLength;
   }
 };
 

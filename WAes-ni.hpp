@@ -13,7 +13,7 @@ enum class Padding
 	PKCS7,
 };
 
-template <int N> struct aesN;
+template <int> struct aesN;
 template <> struct aesN<128>
 {
 	enum { Nk = 4, Nr = 10 };
@@ -196,38 +196,34 @@ public:
 		memcpy(&m_iv, counter, length > 16 ? 16 : length);
 	}
 
-	uint8_t* Cipher(const void *in, size_t inLength, void *out, size_t &outLength) const
+	size_t Cipher(const void *in, size_t inLength, void *out, size_t outLength) const
 	{
-		auto* input = reinterpret_cast<const uint8_t*>(in);
-		auto* output = reinterpret_cast<uint8_t*>(out);
 		switch (m_mode)
 		{
 		case Mode::ECB:
-			return cipherECB(input, inLength, output, outLength);
+			return cipherECB(in, inLength, out, outLength);
 		case Mode::CBC:
-			return cipherCBC(input, inLength, output, outLength);
+			return cipherCBC(in, inLength, out, outLength);
 		case Mode::CTR:
-			return cipherCTR(input, inLength, output, outLength);
+			return cipherCTR(in, inLength, out, outLength);
 		}
 
-		return nullptr;
+		return 0;
 	}
 
-	void* InvCipher(const void *in, size_t inLength, void *out, size_t &outLength) const
+	size_t InvCipher(const void *in, size_t inLength, void *out, size_t outLength) const
 	{
-		auto* input = reinterpret_cast<const uint8_t*>(in);
-		auto* output = reinterpret_cast<uint8_t*>(out);
 		switch (m_mode)
 		{
 		case Mode::ECB:
-			return invCipherECB(input, inLength, output, outLength);
+			return invCipherECB(in, inLength, out, outLength);
 		case Mode::CBC:
-			return invCipherCBC(input, inLength, output, outLength);
+			return invCipherCBC(in, inLength, out, outLength);
 		case Mode::CTR:
-			return cipherCTR(input, inLength, output, outLength);
+			return cipherCTR(in, inLength, out, outLength);
 		}
 
-		return nullptr;
+		return 0;
 	}
 
 private:
@@ -286,16 +282,13 @@ private:
 		return true;
 	}
 
-	uint8_t* cipherECB(const uint8_t* in, size_t inLength, uint8_t* out, size_t& outLength) const
+	size_t cipherECB(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
 		auto nNeedLen = SumCipherLength(inLength);
 		if (outLength < nNeedLen)
 		{
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
-
-		outLength = nNeedLen;
 
 		__m128i state;
 		auto len = inLength;
@@ -316,19 +309,16 @@ private:
 		cipher(state);
 		_mm_storeu_si128(output, state);
 
-		return out;
+		return nNeedLen;
 	}
 
-	uint8_t* cipherCBC(const uint8_t* in, size_t inLength, uint8_t* out, size_t& outLength) const
+	size_t cipherCBC(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
 		auto nNeedLen = SumCipherLength(inLength);
 		if (outLength < nNeedLen)
 		{
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
-
-		outLength = nNeedLen;
 
 		auto len = inLength;
 		auto input = reinterpret_cast<const __m128i*>(in);
@@ -358,18 +348,15 @@ private:
 		cipher(state);
 		_mm_storeu_si128(output, state);
 
-		return out;
+		return nNeedLen;
 	}
 
-	uint8_t* cipherCTR(const uint8_t* in, size_t inLength, uint8_t* out, size_t& outLength) const
+	size_t cipherCTR(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
 		if (outLength < inLength)
 		{
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
-
-		outLength = inLength;
 
 		auto counter = m_iv;
 		auto addCounter = [&counter]()
@@ -412,15 +399,14 @@ private:
 			}
 		}
 
-		return out;
+		return inLength;
 	}
 
-	void* invCipherECB(const uint8_t* in, size_t inLength, uint8_t* out, size_t& outLength) const
+	size_t invCipherECB(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
 		if (!inLength || inLength % 16)// invalid data length
 		{
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
 
 		auto len = static_cast<int64_t>(inLength) / 16 - 1;
@@ -442,8 +428,7 @@ private:
 		{
 			if (!isValidPKCS7Padding(state))
 			{
-				outLength = 0;
-				return nullptr;
+				return 0;
 			}
 			padLen = reinterpret_cast<uint8_t*>(&state)[15];
 		}
@@ -451,8 +436,7 @@ private:
 		if (outLength < inLength - padLen)
 		{
 			// out buffer too small
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
 
 		outLength = inLength - padLen;
@@ -467,15 +451,14 @@ private:
 			_mm_storeu_si128(output, state);
 		}
 
-		return out;
+		return outLength;
 	}
 
-	void* invCipherCBC(const uint8_t* in, size_t inLength, uint8_t* out, size_t& outLength) const
+	size_t invCipherCBC(const void* in, size_t inLength, void* out, size_t outLength) const
 	{
 		if (!inLength || inLength % 16)// invalid data length
 		{
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
 
 		auto len = static_cast<int64_t>(inLength) / 16 - 1;
@@ -508,8 +491,7 @@ private:
 		{
 			if (!isValidPKCS7Padding(state))
 			{
-				outLength = 0;
-				return nullptr;
+				return 0;
 			}
 			padLen = reinterpret_cast<uint8_t*>(&state)[15];
 		}
@@ -517,8 +499,7 @@ private:
 		if (outLength < inLength - padLen)
 		{
 			// out buffer too small
-			outLength = 0;
-			return nullptr;
+			return 0;
 		}
 
 		outLength = inLength - padLen;
@@ -536,7 +517,7 @@ private:
 			iv = _mm_loadu_si128(input);
 		}
 
-		return out;
+		return outLength;
 	}
 };
 

@@ -18,6 +18,8 @@
 
 ## 具体怎么用？
 以128位密钥强度为例，如何对数据进行加解密。
+
+创建一个aes128-ecb对象：
 ```c++
 const uint8_t key[16] = {
     0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 
@@ -38,32 +40,28 @@ uint8_t plaintext[16] = {}, ciphertext[32] = {};
 
 // ECB / pkcs7 padding
 CWAes128 ecb(key, 16);
-// 加密
-auto outLen = sizeof(ciphertext);
-ecb.Cipher(data, 16, ciphertext, outLen);
-// 解密
-auto outLen = sizeof(plaintext);
-ecb.InvCipher(ciphertext, 32, plaintext, outLen);
-
+```
+创建一个aes128-cbc对象：
+```c++
 // CBC / Zero padding
 CWAes128 cbc(key, 16, iv, 16, Padding::Zeros);
-// cbc.SetIV(iv2, 16); // 可以修改IV，并从任意模式切为CBC模式。
-// 加密
-auto outLen = sizeof(ciphertext);
-cbc.Cipher(data, 16, ciphertext, outLen);
-// 解密
-auto outLen = sizeof(plaintext);
-cbc.InvCipher(ciphertext, 32, plaintext, outLen);
-
+cbc.SetIV(iv2, 16); // 可以修改IV，并从任意模式切为CBC模式。
+```
+创建一个aes128-ctr对象：
+```c++
 // CTR / none padding
 CWAes128 ctr(key, 16);
 ctr.SetCounter(iv, 16);// 设置counter并转为ctr模式。
-// 加密
-auto outLen = sizeof(ciphertext);
-ctr.Cipher(data, 16, ciphertext, outLen);
-// 解密
-auto outLen = sizeof(plaintext);
-ctr.InvCipher(ciphertext, 32, plaintext, outLen);
+```
+加密：
+```c++
+CWAes aes(...);
+auto outLen = aes.Cipher(data, 16, ciphertext, sizeof(ciphertext));
+```
+解密：
+```c++
+CWAes aes(...);
+auto outLen = aes.InvCipher(ciphertext, 32, plaintext, sizeof(plaintext));
 ```
 不同的模式和补位方式都是在AES对象构造的时候决定。后续可以通过`SetIV`或者`SetCounter`方法来切换为对应的模式。加解密的接口方法所有模式都是通用的，没有区别。
 
