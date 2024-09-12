@@ -116,7 +116,7 @@ private:
 
 	static const uint8_t m_sBox[256];
 	static const uint8_t m_invSbox[256];
-	uint8_t m_w[Nb * (Nr + 1) * 4];
+	uint32_t m_w[Nb * (Nr + 1)];
 	uint8_t m_iv[16] = {};
 	Padding m_padding;
 	Mode m_mode;
@@ -161,7 +161,7 @@ private:
 
 	void keyExpansion(const uint8_t* key)
 	{
-		static const uint8_t rc[] = { 0, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36 };
+		static const uint8_t rc[] = { 0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36 };
 
 		auto subWord = [](uint8_t *w)
 		{
@@ -173,43 +173,24 @@ private:
 
 		for (uint8_t i = 0; i < Nk; ++i)
 		{
-			m_w[4 * i + 0] = key[4 * i + 0];
-			m_w[4 * i + 1] = key[4 * i + 1];
-			m_w[4 * i + 2] = key[4 * i + 2];
-			m_w[4 * i + 3] = key[4 * i + 3];
+			m_w[i] = *reinterpret_cast<const uint32_t*>(key + 4 * i);
 		}
 
-		uint8_t temp[4];
 		for (int i = Nk; i < Nb * (Nr + 1); ++i)
 		{
-			temp[0] = m_w[4 * (i - 1) + 0];
-			temp[1] = m_w[4 * (i - 1) + 1];
-			temp[2] = m_w[4 * (i - 1) + 2];
-			temp[3] = m_w[4 * (i - 1) + 3];
-
-
+			m_w[i] = m_w[i - 1];
 			if (0 == i % Nk)
 			{
-				// rot word
-				auto tmp = temp[0];
-				temp[0] = temp[1];
-				temp[1] = temp[2];
-				temp[2] = temp[3];
-				temp[3] = tmp;
+				m_w[i] = (m_w[i] >> 8) | (m_w[i] << 24);// rot word
+				subWord(reinterpret_cast<uint8_t*>(m_w + i));
 
-				subWord(temp);
-
-				temp[0] ^= rc[i / Nk];
+				m_w[i] ^= rc[i / Nk];
 			}
-			else if (Nk > 6 && (i % Nk == 4))
+			else if (8 == Nk && 4 == i % Nk)
 			{
-				subWord(temp);
+				subWord(reinterpret_cast<uint8_t*>(m_w + i));
 			}
-
-			m_w[4 * i + 0] = m_w[4 * (i - Nk) + 0] ^ temp[0];
-			m_w[4 * i + 1] = m_w[4 * (i - Nk) + 1] ^ temp[1];
-			m_w[4 * i + 2] = m_w[4 * (i - Nk) + 2] ^ temp[2];
-			m_w[4 * i + 3] = m_w[4 * (i - Nk) + 3] ^ temp[3];
+			m_w[i] ^= m_w[i - Nk];
 		}
 	}
 
@@ -284,7 +265,7 @@ private:
 	void addRoundKey(uint8_t *state, uint8_t r) const
 	{
 		auto rv = reinterpret_cast<uint64_t*>(state);
-		auto rk = reinterpret_cast<const uint64_t*>(m_w + 4 * Nb * r);
+		auto rk = reinterpret_cast<const uint64_t*>(m_w + Nb * r);
 		rv[0] ^= rk[0];
 		rv[1] ^= rk[1];
 	}
