@@ -116,8 +116,8 @@ private:
 
 	static const uint8_t m_sBox[256];
 	static const uint8_t m_invSbox[256];
-	uint32_t m_w[Nb * (Nr + 1)];
-	uint8_t m_iv[16] = {};
+	alignas(16) uint32_t m_w[Nb * (Nr + 1)];
+	alignas(16) uint8_t m_iv[16] = {};
 	Padding m_padding;
 	Mode m_mode;
 
@@ -167,7 +167,7 @@ private:
 		{
 			for (uint8_t i = 0; i < 4; ++i)
 			{
-				w[i] = m_sBox[16 * ((w[i] & 0xf0) >> 4) | (w[i] & 0x0f)];
+				w[i] = m_sBox[w[i]];
 			}
 		};
 
@@ -221,7 +221,7 @@ private:
 	{
 		for (uint8_t i = 0; i < 4 * Nb; ++i)
 		{
-			state[i] = m_sBox[16 * ((state[i] & 0xf0) >> 4) | (state[i] & 0x0f)];
+			state[i] = m_sBox[state[i]];
 		}
 	}
 
@@ -253,8 +253,7 @@ private:
 		uint8_t arr[4];
 		for (int i = 0; i < 4; ++i, state += 4)
 		{
-			memcpy(arr, state, 4);
-
+			*reinterpret_cast<uint32_t*>(arr) = *reinterpret_cast<uint32_t*>(state);
 			state[0] = gfmul(0x02, arr[0]) ^ gfmul(0x03, arr[1]) ^ arr[2] ^ arr[3];
 			state[1] = arr[0] ^ gfmul(0x02, arr[1]) ^ gfmul(0x03, arr[2]) ^ arr[3];
 			state[2] = arr[0] ^ arr[1] ^ gfmul(0x02, arr[2]) ^ gfmul(0x03, arr[3]);
@@ -274,7 +273,7 @@ private:
 	{
 		for (uint8_t i = 0; i < 4 * Nb; ++i)
 		{
-			state[i] = m_invSbox[16 * ((state[i] & 0xf0) >> 4) | (state[i] & 0x0f)];
+			state[i] = m_invSbox[state[i]];
 		}
 	}
 
@@ -306,8 +305,7 @@ private:
 		uint8_t arr[4];
 		for (uint8_t i = 0; i < 4; ++i, state += 4)
 		{
-			memcpy(arr, state, 4);
-
+			*reinterpret_cast<uint32_t*>(arr) = *reinterpret_cast<uint32_t*>(state);
 			state[0] = gfmul(0x0e, arr[0]) ^ gfmul(0x0b, arr[1]) ^ gfmul(0x0d, arr[2]) ^ gfmul(0x09, arr[3]);
 			state[1] = gfmul(0x09, arr[0]) ^ gfmul(0x0e, arr[1]) ^ gfmul(0x0b, arr[2]) ^ gfmul(0x0d, arr[3]);
 			state[2] = gfmul(0x0d, arr[0]) ^ gfmul(0x09, arr[1]) ^ gfmul(0x0e, arr[2]) ^ gfmul(0x0b, arr[3]);
