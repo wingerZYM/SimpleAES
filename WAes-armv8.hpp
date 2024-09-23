@@ -548,7 +548,7 @@ class CWAes {
 
     uint8x16_t iv;
     if (len) {
-      iv = vld1q_u8(in + len - 16);
+      iv = vld1q_u8(input + len - 16);
     } else {
       iv = m_iv;
     }

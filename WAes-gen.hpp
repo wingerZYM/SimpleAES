@@ -250,7 +250,7 @@ private:
 
 	void mixColumns(uint8_t *state) const
 	{
-		uint8_t arr[4];
+		alignas(16) uint8_t arr[4];
 		for (int i = 0; i < 4; ++i, state += 4)
 		{
 			*reinterpret_cast<uint32_t*>(arr) = *reinterpret_cast<uint32_t*>(state);
@@ -302,7 +302,7 @@ private:
 
 	void invMixColumns(uint8_t *state) const
 	{
-		uint8_t arr[4];
+		alignas(16) uint8_t arr[4];
 		for (uint8_t i = 0; i < 4; ++i, state += 4)
 		{
 			*reinterpret_cast<uint32_t*>(arr) = *reinterpret_cast<uint32_t*>(state);
@@ -400,7 +400,7 @@ private:
 			return 0;
 		}
 
-		uint8_t counter[16];
+		alignas(16) uint8_t counter[16];
 		memcpy(counter, m_iv, 16);
 		auto addCounter = [&counter]()
 		{
@@ -418,7 +418,7 @@ private:
 			}
 		};
 
-		uint8_t state[4 * Nb];
+		alignas(16) uint8_t state[4 * Nb];
 		int64_t len = inLength;
 		auto input = reinterpret_cast<const uint8_t*>(in);
 		auto output = reinterpret_cast<uint8_t*>(out);
@@ -447,7 +447,7 @@ private:
 			return 0;
 		}
 
-		uint8_t state[4 * Nb];
+		alignas(16) uint8_t state[4 * Nb];
 		auto input = reinterpret_cast<const uint8_t*>(in) + inLength - 16;
 
 		// sum padding length
@@ -503,7 +503,7 @@ private:
 			return 0;
 		}
 
-		uint8_t state[4 * Nb];
+		alignas(16) uint8_t state[4 * Nb];
 		auto input = reinterpret_cast<const uint8_t*>(in) + inLength - 16;
 
 		// sum padding length
