@@ -1,25 +1,35 @@
 # SimpleAES
-可能是最简单的一个C++ AES加解密库。
-  
-## 简单到什么程度？
-在支持C++11的环境中，只需要一个`hpp`头文件就足够了。
+
+[中文说明](README_CN.md)
+
+Possibly the simplest C++ AES encryption/decryption library.
+
+## How simple is it?
+
+In any C++11-compatible environment, all you need is a single `hpp` header file:
+
 ```c++
 #include "WAes-gen.hpp"
 ```
-是的，只需要在源文件中包含一个头文件，就可以对数据进行AES加解密操作了。只要编译器支持C++11，就没有别的要求。甚至可以集成到oc++的.mm文件中。并且不会让最终发布的程序产生任何新的依赖。
 
-## 这么简单，能做什么？
-设计这个库的时候，本着简单、易用、**够用**、~~高效~~、无依赖的原则。因此并没有大而全的覆盖所有加密模式。而是实现了最最常用的模式，以求用最精简的方式满足绝大多数的使用场景。具体如下：
-* 128、192、256 三种密钥强度
-* ECB、CBC、CTR 三种加密模式
-* Zero、PKCS7 两种补位方式
+Yes, just include this header in your source file and you're ready to perform AES encryption and decryption. As long as the compiler supports C++11, there are no other dependencies. It can even be integrated into Objective-C++ `.mm` files, and it won't introduce any new runtime dependencies to your final application.
 
-以上的组合，目前已足够覆盖本人所有的生产与测试环境。
+## What can it do despite being so simple?
 
-## 具体怎么用？
-以128位密钥强度为例，如何对数据进行加解密。
+The library was designed with the principles of simplicity, ease of use, **sufficiency**, ~~efficiency~~, and no external dependencies. Therefore, instead of supporting all encryption modes, it focuses only on the most commonly used ones to meet the needs of most real-world and testing scenarios with minimal implementation. Specifically, it supports:
 
-创建一个aes128-ecb对象：
+* 128, 192, and 256-bit key lengths
+* ECB, CBC, and CTR encryption modes
+* Zero and PKCS7 padding schemes
+
+These combinations are currently sufficient for all of my own production and testing environments.
+
+## How to use it?
+
+Here’s how to encrypt and decrypt data using a 128-bit key as an example.
+
+Create an AES-128 ECB object:
+
 ```c++
 const uint8_t key[16] = {
     0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 
@@ -41,42 +51,55 @@ uint8_t plaintext[16] = {}, ciphertext[32] = {};
 // ECB / pkcs7 padding
 CWAes128 ecb(key, 16);
 ```
-创建一个aes128-cbc对象：
+
+Create an AES-128 CBC object:
+
 ```c++
 // CBC / Zero padding
 CWAes128 cbc(key, 16, iv, 16, Padding::Zeros);
-cbc.SetIV(iv2, 16); // 可以修改IV，并从任意模式切为CBC模式。
+cbc.SetIV(iv2, 16); // You can change the IV and switch to CBC mode at any time.
 ```
-创建一个aes128-ctr对象：
+
+Create an AES-128 CTR object:
+
 ```c++
-// CTR / none padding
+// CTR / no padding
 CWAes128 ctr(key, 16);
-ctr.SetCounter(iv, 16);// 设置counter并转为ctr模式。
+ctr.SetCounter(iv, 16); // Set counter and switch to CTR mode.
 ```
-加密：
+
+Encryption:
+
 ```c++
 CWAes aes(...);
 auto outLen = aes.Cipher(data, 16, ciphertext, sizeof(ciphertext));
 ```
-解密：
+
+Decryption:
+
 ```c++
 CWAes aes(...);
 auto outLen = aes.InvCipher(ciphertext, 32, plaintext, sizeof(plaintext));
 ```
-不同的模式和补位方式都是在AES对象构造的时候决定。后续可以通过`SetIV`或者`SetCounter`方法来切换为对应的模式。加解密的接口方法所有模式都是通用的，没有区别。
 
-## 还有两个头文件是干什么的？
-说好的单一头文件支持全功能，那么还有`WAes-ni.hpp`与`WAes-armv8.hpp`两个文件又是用来干什么的呢？
+The encryption mode and padding method are determined when constructing the AES object. You can later switch modes using `SetIV` or `SetCounter`. The encryption and decryption interfaces are the same across all modes.
 
-这就要说到CPU的指令集，比如众所周知的`SSE`指令集。鉴于AES加密在各种生产、生活中的应用日渐增多，Intel公司在Westmere架构的x86 CPU中开始加入了一组名为`AES-NI`的硬件指令集。按照官方的说法，使用AES CPU指令进行AES操作，可以获得4倍左右的性能提升，包括更快的速度，更低的功耗等。随后另外一个CPU大头ARM公司，也在ARMv8-A架构中添加了类似的`AES`硬件指令，以提供硬件加速功能。
+## What are the other two header files for?
 
-再看这两个文件的文件名，就十分清楚了。`WAes-ni.hpp`是基于intel AES-NI与SSE指令集的实现。`WAes-armv8.hpp`是基于ARMv8-A架构中的AES与neon指令集的实现。这两个实现的公共接口完全相同。因此想要切换通用实现到硬件加速的实现，只需要更改包含的文件就可以，非常简单。
+You might wonder—if the single header file supports all functions, what are `WAes-ni.hpp` and `WAes-armv8.hpp` for?
 
-那么使用CPU指令性能会有所提升吗？答案是肯定的。而且在不经过编译器优化的编译结果上，那可是遥遥领先…… 但是，这是有代价的。就是可能的兼容性问题。arm的情况可能好一些，毕竟arm的设备换代快。而且主流，比如APPLE的M系列芯片就是从一开始就使用ARMv8-A(64bit)架构。而x86系的CPU情况就复杂得多。Intel是在2010年开始加入AES-NI指令集，而另外一个x86巨头AMD支持得更晚。目前还是有很多不支持AES-NI指令集的机器在运行。而本人就切实的在生产环境中遇到过。因此除非有明确的应用场景（比如服务端），还是使用通用实现比较安全。
+This relates to CPU instruction sets, such as the well-known `SSE`. Given the increasing use of AES in modern applications, Intel introduced a set of AES-specific instructions called `AES-NI` in their Westmere architecture CPUs. According to Intel, using AES-NI can provide roughly 4x the performance with lower power consumption. Similarly, ARM added AES hardware instructions to the ARMv8-A architecture to provide hardware acceleration.
 
-那么有没有可能，在运行时决定是否使用CPU指令来进行加速呢？在支持的CPU上使用指令集实例，在不支持的CPU上使用通用实例？当然是可以的。但是这样做会使用代码变得复杂，结构需要重新设计并实现。等日后有机会再考虑重新实现一版。
+The file names make it obvious: `WAes-ni.hpp` is implemented using Intel’s AES-NI and SSE, while `WAes-armv8.hpp` uses ARMv8-A’s AES and NEON instructions. Both implementations share the exact same interface, so switching between the generic and hardware-accelerated version is as simple as changing the included file.
 
-上面“高效”被划掉，就是出于兼容性的考虑，没有追求极致的性能。实际上本人已经力所能及的优化性能，尽可能的追求了高效！而且以gcc编译器的经验，通过`-O3`参数的优化后，性能上的差距也没有默认参数那么的巨大。
+So does using CPU instructions improve performance? Definitely. Especially without compiler optimizations, hardware acceleration can vastly outperform generic implementations. However, it comes with compatibility risks. ARM tends to be more consistent—devices upgrade quickly, and popular chips like Apple’s M-series have always used ARMv8-A (64-bit). x86 is more complex: Intel began supporting AES-NI in 2010, and AMD added it even later. Many older machines still lack AES-NI. I've encountered this firsthand in production.
 
-## 还有什么已知的问题吗？
-其实AES一部分操作是可以并发执行的。比如ECB的加解密，CBC的解密过程等。但是引入并发操作，必然导致代码的复杂。及小规模数据操作时，并发带来的性能提升，是否能够弥补并发带的开销也是个问题。因此，本着用最精简的方式满足绝大多数的使用场景的设计理念，本库就不做这方面的考虑。
+So unless you're targeting a controlled environment (e.g., server-side), the generic implementation is safer.
+
+Could runtime detection be used to dynamically choose between generic and hardware implementations? Yes, absolutely. But this would complicate the design and structure, requiring a full re-implementation—something for a future version.
+
+That's why the word “efficient” above is crossed out: performance was not the top priority for compatibility reasons. Still, performance has been optimized where possible. For example, when compiled with GCC and the `-O3` flag, performance differences are greatly reduced compared to default settings.
+
+## Are there any known limitations?
+
+Some AES operations are naturally parallelizable—like ECB encryption/decryption and CBC decryption. However, introducing concurrency adds code complexity. Also, the benefits on small datasets may not justify the cost. In line with the design philosophy of satisfying most use cases with minimal implementation, this library does not implement concurrency.
