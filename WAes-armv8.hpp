@@ -272,7 +272,7 @@ class CWAes {
 
   ~CWAes() = default;
 
-  static int SumCipherLength(int nInLen) {
+  static size_t SumCipherLength(size_t nInLen) {
     return (nInLen / (4 * Nb) + 1) * (4 * Nb);
   }
 
@@ -389,7 +389,7 @@ class CWAes {
 
     state = vld1q_u8(input);
     // Padding
-    auto pad = Padding::Zeros == m_padding ? 0 : 16 - len;
+    auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<int>(len);
     memset(reinterpret_cast<uint8_t*>(&state) + len, pad, 16 - len);
 
     cipher(state);
@@ -443,33 +443,31 @@ class CWAes {
       return 0;
     }
 
-    auto counter = m_iv;
-    auto addCounter = [&counter]() {
-      auto pos = reinterpret_cast<uint8_t*>(&counter);
-      for (int8_t i = 15; i >= 0; --i) {
-        if (UINT8_MAX == pos[i]) {
-          pos[i] = 0;
-        } else {
-          ++pos[i];
-          break;
-        }
-      }
+    static const uint64x2_t one = {0, 1};
+    static const uint8x16_t bswap_epi64 = {
+#if defined(_MSC_VER)
+        0x0001020304050607ull, 0x08090a0b0c0d0e0full
+#else
+        7,  6,  5,  4,  3,  2, 1, 0, 15,
+        14, 13, 12, 11, 10, 9, 8
+#endif
     };
+    auto counter = vreinterpretq_u64_u8(vqtbl1q_u8(m_iv, bswap_epi64));
 
     int64_t len = inLength / 16;
     auto input = reinterpret_cast<const uint8_t*>(in);
     auto output = reinterpret_cast<uint8_t*>(out);
     for (int64_t i = 0; i < len; ++i, input += 16, output += 16) {
-      auto state = counter;
+      auto state = vqtbl1q_u8(vreinterpretq_u8_u64(counter), bswap_epi64);
       cipher(state);
       vst1q_u8(output, veorq_u8(vld1q_u8(input), state));
 
-      addCounter();
+      counter = vaddq_u64(counter, one);
     }
 
     int8_t endLen = inLength % 16;
     if (endLen) {
-      auto state = counter;
+      auto state = vqtbl1q_u8(vreinterpretq_u8_u64(counter), bswap_epi64);
       cipher(state);
       for (int8_t i = 0; i < endLen; ++i) {
         reinterpret_cast<uint8_t*>(output)[i] =

@@ -96,9 +96,19 @@ So does using CPU instructions improve performance? Definitely. Especially witho
 
 So unless you're targeting a controlled environment (e.g., server-side), the generic implementation is safer.
 
-Could runtime detection be used to dynamically choose between generic and hardware implementations? Yes, absolutely. But this would complicate the design and structure, requiring a full re-implementation—something for a future version.
+Could runtime detection be used to dynamically choose between generic and hardware implementations? Yes, absolutely. Version 2 has implemented runtime automatic selection.
 
-That's why the word “efficient” above is crossed out: performance was not the top priority for compatibility reasons. Still, performance has been optimized where possible. For example, when compiled with GCC and the `-O3` flag, performance differences are greatly reduced compared to default settings.
+When using the instruction set versions, you need to add specific compiler flags to enable the corresponding instruction sets.
+
+For x86 architecture on GCC and Clang (Linux) using the `aes-ni` version, you should add the flags `-mssse3` and `-maes`:
+```shell
+c++ -std=c++11 -mssse3 -maes test.cpp
+```
+For ARM64 architecture on GCC using the `armv8` version, you need to add the flag `-march=armv8-a+crypto`:
+```shell
+c++ -std=c++11 -march=armv8-a+crypto test.cpp
+```
+On Apple's ARM64 architecture with Clang, it seems that no additional flags are needed for successful compilation.
 
 ## Are there any known limitations?
 

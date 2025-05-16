@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory.h>
 
+#include <tmmintrin.h>
 #include <wmmintrin.h>
 
 // AES // ECB/CBC/CTR // PKCS7Padding/ZerosPadding
@@ -358,40 +359,28 @@ private:
 			return 0;
 		}
 
-		auto counter = m_iv;
-		auto addCounter = [&counter]()
-		{
-			auto pos = reinterpret_cast<uint8_t*>(&counter);
-			for (int8_t i = 15; i >= 0; --i)
-			{
-				if (UINT8_MAX == pos[i])
-				{
-					pos[i] = 0;
-				}
-				else
-				{
-					++pos[i];
-					break;
-				}
-			}
-		};
+		static const auto one = _mm_set_epi32(0, 1, 0, 0);
+		static const auto bswap_epi64 = _mm_setr_epi8(
+			7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
+
+		auto counter = _mm_shuffle_epi8(m_iv, bswap_epi64);
 
 		int64_t len = inLength / 16;
 		auto input = reinterpret_cast<const __m128i*>(in);
 		auto output = reinterpret_cast<__m128i*>(out);
 		for (int64_t i = 0; i < len; ++i, ++input, ++output)
 		{
-			auto state = _mm_load_si128(&counter);
+			auto state = _mm_shuffle_epi8(counter, bswap_epi64);
 			cipher(state);
 			_mm_storeu_si128(output, _mm_xor_si128(_mm_loadu_si128(input), state));
 
-			addCounter();
+			counter = _mm_add_epi64(counter, one);
 		}
 
 		int8_t endLen = inLength % 16;
 		if (endLen)
 		{
-			auto state = _mm_load_si128(&counter);
+			auto state = _mm_shuffle_epi8(counter, bswap_epi64);
 			cipher(state);
 			for (int8_t i = 0; i < endLen; ++i)
 			{
