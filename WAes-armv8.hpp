@@ -523,7 +523,7 @@ class CWAes {
     }
 
     outLength = inLength - padLen;
-    uint8_t endLen = outLength % 16;
+    uint8_t endLen = padLen ? outLength % 16 : 16;
     auto output = reinterpret_cast<uint8_t*>(out);
     memcpy(output + len, reinterpret_cast<uint8_t*>(&state), endLen);
 
@@ -580,7 +580,7 @@ class CWAes {
     }
 
     outLength = inLength - padLen;
-    uint8_t endLen = outLength % 16;
+    uint8_t endLen = padLen ? outLength % 16 : 16;
     auto output = reinterpret_cast<uint8_t*>(out);
     memcpy(output + len, &state, endLen);
 

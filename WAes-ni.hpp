@@ -438,7 +438,7 @@ private:
 		}
 
 		outLength = inLength - padLen;
-		uint8_t endLen = outLength % 16;
+		uint8_t endLen = padLen ? outLength % 16 : 16;
 		auto output = reinterpret_cast<__m128i*>(out);
 		memcpy(output + len, &state, endLen);
 
@@ -501,7 +501,7 @@ private:
 		}
 
 		outLength = inLength - padLen;
-		uint8_t endLen = outLength % 16;
+		uint8_t endLen = padLen ? outLength % 16 : 16;
 		auto output = reinterpret_cast<__m128i*>(out);
 		memcpy(output + len, &state, endLen);
 
