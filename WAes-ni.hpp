@@ -174,9 +174,12 @@ public:
 
 	~CWAes() = default;
 
-	static size_t SumCipherLength(size_t nInLen)
-	{
-		return (nInLen / (4 * Nb) + 1) * (4 * Nb);
+	size_t SumCipherLength(size_t nInLen) const {
+	constexpr size_t blockSize = Nb * 4;
+	if (m_padding == Padding::Zeros)
+		return ((nInLen + blockSize - 1) / blockSize) * blockSize;
+	else // PKCS7
+		return ((nInLen / blockSize) + 1) * blockSize;
 	}
 
 	// Sets the counter value when in CBC mode. 
@@ -302,13 +305,16 @@ private:
 			_mm_storeu_si128(output, state);
 		}
 
-		state = _mm_loadu_si128(input);
 		// Padding
-		auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<int>(len);
-		memset(reinterpret_cast<uint8_t*>(&state) + len, pad, 16 - len);
+		if (len || Padding::PKCS7 == m_padding)
+		{
+			state = _mm_loadu_si128(input);
+			auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<int>(len);
+			memset(reinterpret_cast<uint8_t*>(&state) + len, pad, 16 - len);
 
-		cipher(state);
-		_mm_storeu_si128(output, state);
+			cipher(state);
+			_mm_storeu_si128(output, state);
+		}
 
 		return nNeedLen;
 	}
@@ -334,20 +340,23 @@ private:
 		}
 
 		// Padding
-		for (uint8_t i = 0; i < len; ++i)
+		if (len || Padding::PKCS7 == m_padding)
 		{
-			reinterpret_cast<uint8_t*>(&state)[i] ^= reinterpret_cast<const uint8_t*>(input)[i];
-		}
-		if (Padding::PKCS7 == m_padding)
-		{
-			for (auto i = len; i < 16; ++i)
+			for (uint8_t i = 0; i < len; ++i)
 			{
-				reinterpret_cast<uint8_t*>(&state)[i] ^= 16 - len;
+				reinterpret_cast<uint8_t*>(&state)[i] ^= reinterpret_cast<const uint8_t*>(input)[i];
 			}
-		}
+			if (Padding::PKCS7 == m_padding)
+			{
+				for (auto i = len; i < 16; ++i)
+				{
+					reinterpret_cast<uint8_t*>(&state)[i] ^= 16 - len;
+				}
+			}
 
-		cipher(state);
-		_mm_storeu_si128(output, state);
+			cipher(state);
+			_mm_storeu_si128(output, state);
+		}
 
 		return nNeedLen;
 	}

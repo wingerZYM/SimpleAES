@@ -47,9 +47,12 @@ public:
 
 	~CWAes() = default;
 
-	static size_t SumCipherLength(size_t nInLen)
-	{
-		return (nInLen / (4 * Nb) + 1) * (4 * Nb);
+	size_t SumCipherLength(size_t nInLen) const {
+	constexpr size_t blockSize = Nb * 4;
+	if (m_padding == Padding::Zeros)
+		return ((nInLen + blockSize - 1) / blockSize) * blockSize;
+	else // PKCS7
+		return ((nInLen / blockSize) + 1) * blockSize;
 	}
 
 	// Sets the counter value when in CBC mode. 
@@ -345,11 +348,14 @@ private:
 		}
 
 		// Padding
-		auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<uint8_t>(len);
-		memcpy(output, input, len);
-		memset(output + len, pad, pad);
+		if (len || Padding::PKCS7 == m_padding)
+		{
+			auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<uint8_t>(len);
+			memcpy(output, input, len);
+			memset(output + len, pad, pad);
 
-		cipher(output);
+			cipher(output);
+		}
 
 		return nNeedLen;
 	}
@@ -377,18 +383,21 @@ private:
 		}
 
 		// Padding
-		auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<uint8_t>(len);
-		uint8_t pos = 0;
-		for (; pos < len; ++pos)
+		if (len || Padding::PKCS7 == m_padding)
 		{
-			output[pos] = input[pos] ^ piv[pos];
-		}
-		for (; pos < 16; ++pos)
-		{
-			output[pos] = pad ^ piv[pos];
-		}
+			auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<uint8_t>(len);
+			uint8_t pos = 0;
+			for (; pos < len; ++pos)
+			{
+				output[pos] = input[pos] ^ piv[pos];
+			}
+			for (; pos < 16; ++pos)
+			{
+				output[pos] = pad ^ piv[pos];
+			}
 
-		cipher(output);
+			cipher(output);
+		}
 
 		return nNeedLen;
 	}
