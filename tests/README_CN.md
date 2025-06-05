@@ -1,0 +1,354 @@
+# AES Library Test Suite
+
+这个测试套件用于验证跨平台的多种AES实现：通用代码（所有平台）、AES-NI指令集（x86-64）、VAES指令集（x86-64）、VAES512指令集（x86-64）和ARMv8加密扩展（ARM64）。
+
+**重要设计理念**：这些AES实现是通过替换头文件来切换的，而不是在同一个程序中同时使用。每个测试程序只包含一种实现，确保接口的一致性。
+
+## 文件结构
+
+### 核心文件
+- `test_data.hpp` - 共同的测试数据和常量
+- `test_utils.hpp` - 测试工具函数和辅助类
+- `test_template.hpp` - 通用测试模板，包含所有测试逻辑
+
+### 测试文件
+- `test_generic.cpp` - 通用AES实现测试 (WAes-gen.hpp)
+- `test_aes_ni.cpp` - AES-NI指令集实现测试 (WAes-ni.hpp) [仅x86-64]
+- `test_vaes.cpp` - VAES指令集实现测试 (WAes-vaes.hpp) [仅x86-64]
+- `test_vaes512.cpp` - VAES512指令集实现测试 (WAes-vaes512.hpp) [仅x86-64]
+- `test_armv8.cpp` - ARMv8加密扩展实现测试 (WAes-armv8.hpp) [仅ARM64]
+
+### 构建和运行文件
+- `Makefile` - 构建系统，支持自动检测VAES支持
+- `run_all_tests.sh` - 运行所有测试的脚本
+
+### 比较工具
+- `compare_implementations.py` - Python脚本，用于比较不同实现的结果
+
+## 测试内容
+
+每个实现都会测试：
+
+### AES模式
+- **ECB模式** - 电子密码本模式
+- **CBC模式** - 密码块链接模式  
+- **CTR模式** - 计数器模式
+
+### 密钥长度
+- **AES-128** - 128位密钥
+- **AES-192** - 192位密钥
+- **AES-256** - 256位密钥
+
+### 填充方式
+- **PKCS7填充** - 标准PKCS#7填充
+- **零填充** - 零字节填充
+- **无填充** - CTR模式不需要填充
+
+### 数据长度
+测试各种数据长度以验证所有场景：
+- 部分块 (1-15字节)
+- 完整块 (16字节)
+- 多个块 (32, 48, 64, 80, 96, 112, 128字节)
+- 大数据集 (256+字节，用于VAES 256位并行处理，512+字节用于VAES512 512位并行处理)
+
+## 使用方法
+
+### 构建测试
+```bash
+cd tests
+make all
+```
+
+### 运行所有功能测试
+```bash
+make run-all
+```
+
+### 运行所有性能测试
+```bash
+make run-perf-all
+```
+
+### 运行完整测试套件
+```bash
+make run-complete     # 使用脚本运行所有测试
+```
+
+### 运行特定实现测试
+```bash
+make run-generic      # 通用实现功能测试
+make run-aes-ni       # AES-NI实现功能测试 (仅x86-64)
+make run-vaes         # VAES实现功能测试 (x86-64，如果支持)
+make run-vaes512      # VAES512实现功能测试 (x86-64，如果支持)
+make run-armv8        # ARMv8实现功能测试 (ARM64，如果支持)
+```
+
+### 运行特定实现性能测试
+```bash
+make run-perf-generic # 通用实现性能测试
+make run-perf-aes-ni  # AES-NI实现性能测试 (仅x86-64)
+make run-perf-vaes    # VAES实现性能测试 (x86-64，如果支持)
+make run-perf-vaes512 # VAES512实现性能测试 (x86-64，如果支持)
+make run-perf-armv8   # ARMv8实现性能测试 (ARM64，如果支持)
+```
+
+### 运行单个测试程序
+```bash
+./test_generic        # 功能测试
+./test_generic perf   # 性能测试
+./test_aes_ni         # 功能测试 (仅x86-64)
+./test_aes_ni perf    # 性能测试 (仅x86-64)
+./test_vaes           # 功能测试 (仅x86-64)
+./test_vaes perf      # 性能测试 (仅x86-64)
+./test_vaes512        # 功能测试 (仅x86-64)
+./test_vaes512 perf   # 性能测试 (仅x86-64)
+./test_armv8          # 功能测试 (仅ARM64)
+./test_armv8 perf     # 性能测试 (仅ARM64)
+```
+
+### 快速测试
+```bash
+make quick-test       # 运行简化的测试
+```
+
+### 检查VAES支持
+```bash
+make check-vaes
+```
+
+### 清理
+```bash
+make clean
+```
+
+### 帮助
+```bash
+make help
+```
+
+## 实现比较工具
+
+比较工具自动比较不同AES实现的结果，确保它们在所有支持的平台和实现上产生相同的输出。
+
+### 支持的平台和实现
+
+#### x86-64 平台
+- **Generic**: 通用C++实现（所有平台支持）
+- **AES-NI**: Intel AES-NI 硬件加速实现
+- **VAES**: Intel VAES (AVX2) 硬件加速实现
+- **VAES512**: Intel VAES (AVX512) 硬件加速实现
+
+#### ARM64 平台  
+- **Generic**: 通用C++实现（所有平台支持）
+- **ARMv8**: ARM Crypto Extensions 硬件加速实现
+
+工具会自动检测当前平台并只比较可用的实现。
+
+### 比较工具使用方法
+
+#### 自动检测并比较所有可用实现
+```bash
+python3 compare_implementations.py
+```
+
+#### 指定要比较的实现
+```bash
+# x86-64 平台示例
+python3 compare_implementations.py Generic AES-NI VAES VAES512
+
+# ARM64 平台示例  
+python3 compare_implementations.py Generic ARMv8
+```
+
+#### 命令行选项
+
+**基本用法**：
+```bash
+python3 compare_implementations.py [OPTIONS] [IMPLEMENTATIONS...]
+```
+
+**可用选项**：
+- **无参数**: 自动检测所有可用的实现并进行比较
+- **`--keep-files, -k`**: 保留测试结果文件，用于调试和分析
+- **`--clean-only, -c`**: 仅清理旧的测试结果文件然后退出
+- **`--verbose, -v`**: 显示详细输出信息
+- **`--random-params, -r`**: 使用随机生成的测试参数而不是默认值
+- **`--help, -h`**: 显示帮助信息
+
+#### 使用示例
+
+**标准比较（自动清理）**：
+```bash
+python3 compare_implementations.py
+# 自动检测实现，运行测试，比较结果，然后清理临时文件
+```
+
+**保留测试文件用于调试**：
+```bash
+python3 compare_implementations.py --keep-files
+```
+
+**使用随机测试参数**：
+```bash
+python3 compare_implementations.py --random-params --verbose
+```
+
+#### 随机测试参数
+
+使用随机测试参数可以：
+- **增加测试覆盖率**: 测试不同的key、IV和counter组合
+- **提高可信度**: 确保实现在各种输入下都能产生一致结果
+- **发现潜在问题**: 某些bug可能只在特定参数组合下出现
+
+当使用`--random-params`时，工具会生成：
+- **AES-128 Key**: 32个十六进制字符 (16字节)
+- **AES-192 Key**: 48个十六进制字符 (24字节)  
+- **AES-256 Key**: 64个十六进制字符 (32字节)
+- **IV**: 32个十六进制字符 (16字节)
+- **Counter**: 32个十六进制字符 (16字节)
+
+#### 文件管理
+
+比较工具会生成：
+- **`test_results_<实现名>.txt`**: 每个实现的详细测试结果
+- **`implementation_comparison_report.txt`**: 比较结果报告
+
+默认情况下，工具会在完成比较后自动清理这些临时文件。使用`--keep-files`保留它们用于调试。
+
+#### Makefile集成的比较功能
+
+```bash
+# 检查平台和可用实现
+make check-platform
+
+# 运行完整的跨实现比较
+make run-cross-compare
+
+# 清理测试结果文件
+make clean-results
+```
+
+## 测试验证
+
+### 功能验证
+- **加密/解密一致性** - 验证加密后解密能恢复原始数据
+- **填充验证** - 验证PKCS7填充的正确性和错误检测
+- **模式正确性** - 验证ECB/CBC/CTR模式的正确实现
+- **边界情况** - 测试各种数据长度的处理
+
+### 性能测试
+- **吞吐量测试** - 测量每种实现的加密/解密速度
+- **性能基准** - 为不同数据大小提供性能参考
+- **实现对比** - 通过手动比较不同实现的性能结果
+
+## 预期结果
+
+### 通用实现 (Generic)
+- 兼容性最好，支持所有平台
+- 性能相对较慢
+- 作为参考实现验证正确性
+
+### AES-NI实现
+- 需要支持AES-NI指令集的CPU
+- 性能显著优于通用实现
+- 单块处理，适合小到中等数据
+
+### VAES实现
+- 需要支持AVX2和AES-NI指令集的CPU
+- 对大数据集性能优于AES-NI（≥32字节）
+- 256位并行处理，2个AES块同时处理
+- 使用VAES指令进行向量化AES运算
+
+### VAES512实现
+- 需要支持AVX-512和VAES指令集的CPU
+- 对超大数据集理论性能最高（≥64字节）
+- 512位并行处理，4个AES块同时处理
+- 硬件支持极其有限，只有最新的CPU支持
+
+### ARMv8实现
+- 需要支持加密扩展的ARM64 CPU
+- ARM平台上的硬件加速AES运算
+- 相比通用实现有优化的性能
+- 在现代ARM64处理器上广泛可用（带加密扩展的ARMv8-A）
+
+## 故障排除
+
+### 硬件加速测试跳过
+如果看到支持未检测到的消息，说明：
+
+**VAES/VAES512 (x86-64)**：
+- CPU不支持所需的指令集（AVX2/AVX-512、AES-NI、VAES）
+- 编译器未启用相应支持
+- 对于VAES512：硬件支持极其有限，大多数CPU不支持AVX-512 + VAES
+
+**ARMv8 (ARM64)**：
+- CPU不支持ARMv8加密扩展
+- 编译器未启用ARM加密扩展支持
+- 运行在非ARM64平台上
+
+### 编译错误
+确保：
+- 使用支持C++17的编译器
+- 编译器支持目标指令集
+- 正确设置了`-march=native`标志
+
+### 测试失败
+如果测试失败：
+1. 验证测试数据完整性
+2. 确认CPU指令集支持
+3. 检查编译优化设置
+4. 对比不同实现的输出结果
+
+### 实现一致性验证
+由于设计理念是通过替换头文件切换实现，无法在同一程序中直接对比。使用比较工具进行跨实现的自动验证。
+
+### 比较工具故障排除
+
+**找不到实现文件**：
+```
+Error: Need at least 2 implementations to compare.
+Available implementations: None
+```
+确保存在至少两个头文件：
+- x86-64: `WAes-gen.hpp`, `WAes-ni.hpp`, `WAes-vaes.hpp`, `WAes-vaes512.hpp`
+- ARM64: `WAes-gen.hpp`, `WAes-armv8.hpp`
+
+**平台不支持某个实现**：
+```
+Skipping AES-NI test - not available on arm64 platform
+```
+这是正常的，工具会根据平台自动跳过不支持的实现。
+
+**调试技巧**：
+```bash
+# 保留文件进行检查
+python3 compare_implementations.py --keep-files --verbose
+
+# 查看特定实现的详细结果
+cat test_results_Generic.txt
+```
+
+## 扩展测试
+
+要添加新的测试：
+1. 在`test_template.hpp`中添加新的测试函数模板
+2. 更新`test_utils.hpp`中的辅助函数（如需要）
+3. 在`Makefile`中添加新的构建目标（如需要）
+4. 更新此README文档
+
+## 实现说明
+
+### VAES实现细节
+当前的VAES实现 (`WAes-vaes.hpp`) 使用256位VAES指令：
+- 基于AVX2指令集 + AES-NI指令集
+- 一次处理2个AES块（32字节）
+- 对于≥32字节的数据使用VAES并行处理
+- 对于<32字节的数据回退到AES-NI处理
+- 广泛的硬件兼容性（Haswell 2013年后的CPU）
+
+### 512位VAES实现
+项目中还包含一个512位VAES实现 (`WAes-vaes512.hpp`)：
+- 基于AVX-512指令集 + VAES指令集
+- 一次处理4个AES块（64字节）
+- 理论性能更高，但硬件支持极其有限
+- 由于AVX-512支持问题，实际无法在大多数机器上运行 

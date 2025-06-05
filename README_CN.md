@@ -8,8 +8,33 @@
 ```
 是的，只需要在源文件中包含一个头文件，就可以对数据进行AES加解密操作了。只要编译器支持C++11，就没有别的要求。甚至可以集成到oc++的.mm文件中。并且不会让最终发布的程序产生任何新的依赖。
 
+## 实现版本说明
+
+目前提供了多个优化版本的AES实现：
+
+### 📦 通用版本
+- **`WAes-gen.hpp`** - 纯C++实现，兼容所有平台和编译器，支持C++11及以上
+
+### ⚡ 硬件加速版本
+
+#### x86/x64架构
+- **`WAes-ni.hpp`** - 基于Intel AES-NI指令集的硬件加速版本
+- **`WAes-vaes.hpp`** - 基于Intel VAES (AVX2) 指令集的高级硬件加速版本
+- **`WAes-vaes512.hpp`** - 基于Intel VAES (AVX512) 指令集的极高性能版本
+
+#### ARM架构  
+- **`WAes-armv8.hpp`** - 基于ARMv8-A AES硬件指令的ARM64加速版本
+
+### 🚀 性能对比
+不同版本的性能从低到高排序：
+```
+Generic < AES-NI < VAES (AVX2) < VAES512 (AVX512)
+```
+
+所有版本的公共接口完全相同，只需要更改包含的头文件即可无缝切换。
+
 ## 这么简单，能做什么？
-设计这个库的时候，本着简单、易用、**够用**、~~高效~~、无依赖的原则。因此并没有大而全的覆盖所有加密模式。而是实现了最最常用的模式，以求用最精简的方式满足绝大多数的使用场景。具体如下：
+设计这个库的时候，本着简单、易用、**够用**、高效、无依赖的原则。因此并没有大而全的覆盖所有加密模式。而是实现了最最常用的模式，以求用最精简的方式满足绝大多数的使用场景。具体如下：
 * 128、192、256 三种密钥强度
 * ECB、CBC、CTR 三种加密模式
 * Zero、PKCS7 两种补位方式
@@ -65,28 +90,198 @@ auto outLen = aes.InvCipher(ciphertext, 32, plaintext, sizeof(plaintext));
 ```
 不同的模式和补位方式都是在AES对象构造的时候决定。后续可以通过`SetIV`或者`SetCounter`方法来切换为对应的模式。加解密的接口方法所有模式都是通用的，没有区别。
 
-## 还有两个头文件是干什么的？
-说好的单一头文件支持全功能，那么还有`WAes-ni.hpp`与`WAes-armv8.hpp`两个文件又是用来干什么的呢？
+## 硬件加速版本详解
 
-这就要说到CPU的指令集，比如众所周知的`SSE`指令集。鉴于AES加密在各种生产、生活中的应用日渐增多，Intel公司在Westmere架构的x86 CPU中开始加入了一组名为`AES-NI`的硬件指令集。按照官方的说法，使用AES CPU指令进行AES操作，可以获得4倍左右的性能提升，包括更快的速度，更低的功耗等。随后另外一个CPU大头ARM公司，也在ARMv8-A架构中添加了类似的`AES`硬件指令，以提供硬件加速功能。
+### Intel AES-NI 版本
+`WAes-ni.hpp` 基于Intel AES-NI指令集实现，相比通用版本有4倍左右的性能提升。
 
-再看这两个文件的文件名，就十分清楚了。`WAes-ni.hpp`是基于intel AES-NI与SSE指令集的实现。`WAes-armv8.hpp`是基于ARMv8-A架构中的AES与neon指令集的实现。这两个实现的公共接口完全相同。因此想要切换通用实现到硬件加速的实现，只需要更改包含的文件就可以，非常简单。
-
-那么使用CPU指令性能会有所提升吗？答案是肯定的。而且在不经过编译器优化的编译结果上，那可是遥遥领先…… 但是，这是有代价的。就是可能的兼容性问题。arm的情况可能好一些，毕竟arm的设备换代快。而且主流，比如APPLE的M系列芯片就是从一开始就使用ARMv8-A(64bit)架构。而x86系的CPU情况就复杂得多。Intel是在2010年开始加入AES-NI指令集，而另外一个x86巨头AMD支持得更晚。目前还是有很多不支持AES-NI指令集的机器在运行。而本人就切实的在生产环境中遇到过。因此除非有明确的应用场景（比如服务端），还是使用通用实现比较安全。
-
-那么有没有可能，在运行时决定是否使用CPU指令来进行加速呢？在支持的CPU上使用指令集实例，在不支持的CPU上使用通用实例？当然是可以的。V2版本已经实现了这种在运行时的自动选择。
-
-使用指令集版本的时候，编译命令上需要添加一些参数打开对应的指令集要求。
-
-gcc与clang(linux)在x86架构的机器上使用`aes-ni`版本时，需要添加参数`-mssse3`与`-maes`。
+**编译要求**：
 ```shell
 c++ -std=c++11 -mssse3 -maes test.cpp
 ```
-gcc在arm64架构上使用`armv8`版本时，需要添加参数`-march=armv8-a+crypto`。
+
+### Intel VAES 版本  
+`WAes-vaes.hpp` 基于AVX2 + VAES指令集，可以并行处理2个AES块，性能更高。
+
+**编译要求**：
 ```shell
-c++ -std=c++11 -march=armv8-a+crypto test.cpp
+c++ -std=c++11 -mavx2 -mvaes test.cpp
 ```
-clang在apple的arm64架构上，似乎不需要添加什么参数就可以正常编译。
+
+### Intel VAES512 版本
+`WAes-vaes512.hpp` 基于AVX512 + VAES指令集，可以并行处理4个AES块，提供极致性能。
+
+**编译要求**：
+```shell
+c++ -std=c++11 -mavx512f -mvaes test.cpp
+```
+
+### ARMv8 版本
+`WAes-armv8.hpp` 基于ARMv8-A AES硬件指令实现，适用于ARM64平台。
+
+**编译要求**：
+```shell
+# Linux ARM64
+c++ -std=c++11 -march=armv8-a+crypto test.cpp
+
+# macOS ARM64 (无需额外参数)
+c++ -std=c++11 test.cpp
+```
+
+## 🧪 测试框架 (`tests/` 目录)
+
+为了确保不同实现之间的一致性和正确性，项目提供了完整的测试框架：
+
+### 测试组件
+
+#### 核心测试文件
+- **`test_template.hpp`** - 通用测试模板，包含所有测试逻辑
+- **`test_data.hpp`** - 测试数据定义（密钥、IV、测试向量等）
+- **`test_utils.hpp`** - 测试工具函数（计时器、数据比较等）
+
+#### 实现测试文件
+- **`test_generic.cpp`** - 通用实现测试
+- **`test_aes_ni.cpp`** - AES-NI实现测试
+- **`test_vaes.cpp`** - VAES(AVX2)实现测试
+- **`test_vaes512.cpp`** - VAES512(AVX512)实现测试
+- **`test_armv8.cpp`** - ARMv8实现测试
+
+#### 跨实现比较工具
+- **`compare_implementations.py`** - Python脚本，自动运行和比较不同实现的结果
+- **`Makefile`** - 自动化构建和测试系统
+
+### 测试功能
+
+#### 📋 功能测试
+测试所有支持的配置组合：
+- **密钥长度**：128位、192位、256位
+- **加密模式**：ECB、CBC、CTR
+- **填充方式**：PKCS7、Zeros
+- **数据大小**：16、32、48、64、192、1024字节
+
+#### ⚡ 性能测试
+- 加密/解密吞吐量测试
+- 不同数据大小的性能对比
+- 各实现之间的性能基准测试
+
+#### 🔄 跨实现一致性验证
+- 自动检测可用的硬件实现
+- 验证所有实现产生相同的加密结果
+- 随机参数测试以增加测试覆盖率
+
+### 使用方法
+
+#### 检查平台支持
+```bash
+cd tests
+make check-platform
+```
+
+#### 运行单个实现测试
+```bash
+make run-generic     # 通用实现
+make run-aes-ni      # AES-NI实现
+make run-vaes        # VAES实现
+make run-vaes512     # VAES512实现（如果支持）
+make run-armv8       # ARMv8实现（ARM64平台）
+```
+
+#### 运行性能测试
+```bash
+make run-perf-all    # 所有实现的性能测试
+make run-perf-vaes512  # VAES512性能测试
+```
+
+#### 跨实现比较
+```bash
+# 自动检测并比较所有可用实现
+python3 compare_implementations.py
+
+# 手动指定要比较的实现
+python3 compare_implementations.py Generic AES-NI VAES VAES512
+
+# 使用随机测试参数
+python3 compare_implementations.py --random-params
+
+# 保留测试文件用于调试
+python3 compare_implementations.py --keep-files --verbose
+```
+
+#### 运行完整测试套件
+```bash
+make run-all         # 运行所有可用实现的功能测试
+make run-cross-compare  # 运行跨实现比较
+```
+
+### 测试输出示例
+
+```bash
+$ make check-platform
+Platform Detection:
+  OS: Linux
+  Architecture: x86_64
+  Detected Platform: x86_64
+  AES-NI Support: yes
+  VAES Support: yes
+  VAES512 Support: yes
+  Building: Generic, AES-NI, VAES, VAES512 tests
+
+$ python3 compare_implementations.py
+AES Implementation Comparison Tool
+==================================================
+Auto-detected implementations: Generic, AES-NI, VAES, VAES512
+Comparing implementations: Generic, AES-NI, VAES, VAES512
+
+Running tests for Generic...
+  ✓ Generic tests completed successfully
+Running tests for AES-NI...
+  ✓ AES-NI tests completed successfully
+Running tests for VAES...
+  ✓ VAES tests completed successfully
+Running tests for VAES512...
+  ✓ VAES512 tests completed successfully
+
+============================================================
+Cross-Implementation Comparison Results
+============================================================
+[PASS] ECB_128_PKCS7_16
+[PASS] ECB_128_PKCS7_32
+...
+[PASS] CTR_256_NoPad_1024
+
+============================================================
+SUMMARY REPORT
+============================================================
+Implementations tested: Generic, AES-NI, VAES, VAES512
+Total tests: 54
+Passed: 54
+Failed: 0
+Success rate: 100.0%
+
+🎉 All tests PASSED! All implementations are equivalent.
+```
+
+## 兼容性说明
+
+### 硬件要求
+
+| 实现版本 | 最低硬件要求 | 推荐用途 |
+|---------|-------------|----------|
+| Generic | 任意CPU | 兼容性优先场景 |
+| AES-NI | Intel Westmere (2010+)<br>AMD Bulldozer (2011+) | 通用x86服务器 |
+| VAES | Intel Ice Lake (2019+)<br>AMD Zen 3 (2020+) | 现代高性能服务器 |
+| VAES512 | Intel Skylake-X (2017+)<br>Intel Ice Lake (2019+) | 专用高性能计算 |
+| ARMv8 | ARMv8-A with Crypto extensions | ARM64服务器/移动设备 |
+
+### 版本选择建议
+
+1. **开发/测试环境**：使用 `Generic` 版本确保兼容性
+2. **现代x86服务器**：优先使用 `VAES` 版本
+3. **高性能计算**：在支持的平台上使用 `VAES512` 版本
+4. **ARM64设备**：使用 `ARMv8` 版本
+5. **跨平台部署**：运行时检测并选择合适版本
 
 ## 还有什么已知的问题吗？
 其实AES一部分操作是可以并发执行的。比如ECB的加解密，CBC的解密过程等。但是引入并发操作，必然导致代码的复杂。及小规模数据操作时，并发带来的性能提升，是否能够弥补并发带的开销也是个问题。因此，本着用最精简的方式满足绝大多数的使用场景的设计理念，本库就不做这方面的考虑。
+
+不过，新增的VAES和VAES512版本在指令级别实现了并行处理，在保持接口简洁的同时显著提升了性能。
