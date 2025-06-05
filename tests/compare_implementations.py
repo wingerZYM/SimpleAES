@@ -366,25 +366,75 @@ def run_implementation_test(impl_name: str,
         return False
 
 
+def check_cpu_feature_support(feature_macros: List[str]) -> bool:
+    """Check if CPU supports specific feature macros using compiler"""
+    try:
+        # Use g++ to check feature macros
+        cmd = ["g++", "-march=native", "-dM", "-E", "-"]
+        process = subprocess.run(cmd,
+                                 input="",
+                                 text=True,
+                                 capture_output=True,
+                                 timeout=10)
+
+        if process.returncode != 0:
+            return False
+
+        defines = process.stdout
+
+        # Check if all required macros are present
+        for macro in feature_macros:
+            if f"#define {macro}" not in defines:
+                return False
+
+        return True
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError,
+            FileNotFoundError):
+        return False
+
+
 def check_implementation_availability() -> List[str]:
-    """Check which AES implementations are available"""
+    """Check which AES implementations are available based on platform and hardware support"""
     available = []
 
-    # Check for header files to determine available implementations
+    # Detect platform
+    try:
+        import platform
+        machine = platform.machine().lower()
+    except ImportError:
+        machine = "unknown"
+
+    # Determine platform type
+    is_x86_64 = machine in ['x86_64', 'amd64']
+    is_arm64 = machine in ['aarch64', 'arm64']
+
+    # Generic implementation is always available
     if os.path.exists("../WAes-gen.hpp"):
         available.append("Generic")
 
-    if os.path.exists("../WAes-ni.hpp"):
-        available.append("AES-NI")
+        # x86-64 specific implementations
+    if is_x86_64:
+        # AES-NI: requires AES instruction support
+        if (os.path.exists("../WAes-ni.hpp")
+                and check_cpu_feature_support(["__AES__"])):
+            available.append("AES-NI")
 
-    if os.path.exists("../WAes-vaes.hpp"):
-        available.append("VAES")
+        # VAES: requires AVX2 + VAES instruction support
+        if (os.path.exists("../WAes-vaes.hpp")
+                and check_cpu_feature_support(["__AVX2__", "__VAES__"])):
+            available.append("VAES")
 
-    if os.path.exists("../WAes-vaes512.hpp"):
-        available.append("VAES512")
+        # VAES512: requires AVX512F + VAES instruction support
+        if (os.path.exists("../WAes-vaes512.hpp")
+                and check_cpu_feature_support(["__AVX512F__", "__VAES__"])):
+            available.append("VAES512")
 
-    if os.path.exists("../WAes-armv8.hpp"):
-        available.append("ARMv8")
+    # ARM64 specific implementations
+    if is_arm64:
+        # ARMv8: requires ARM Crypto Extensions
+        if (os.path.exists("../WAes-armv8.hpp")
+                and check_cpu_feature_support(["__ARM_FEATURE_CRYPTO"])):
+            available.append("ARMv8")
 
     return available
 
@@ -516,6 +566,10 @@ def main():
             ", ".join(implementations)))
     else:
         # Auto-detect available implementations
+        if args.verbose:
+            print(
+                "Detecting available implementations with hardware support check..."
+            )
         available_impls = check_implementation_availability()
         if len(available_impls) >= 2:
             implementations = available_impls
@@ -526,7 +580,10 @@ def main():
             print("Available implementations: {}".format(
                 ", ".join(available_impls) if available_impls else "None"))
             print(
-                "Make sure you have at least 2 of: WAes-gen.hpp, WAes-ni.hpp, WAes-vaes.hpp, WAes-vaes512.hpp, WAes-armv8.hpp"
+                "Make sure you have at least 2 implementation header files and CPU support."
+            )
+            print(
+                "Note: Hardware feature detection is used to filter available implementations."
             )
             sys.exit(1)
 

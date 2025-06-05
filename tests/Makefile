@@ -6,10 +6,10 @@ INCLUDES = -I..
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
 
-# Check for x86_64 and VAES support (requires AVX2 + AES-NI)
+# Check for x86_64 and VAES support (requires AVX2 + VAES)
 ifeq ($(UNAME_M),x86_64)
     PLATFORM = x86_64
-    VAES_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX2__" && echo | $(CXX) -march=native -dM -E - | grep -q "__AES__" && echo "yes" || echo "no")
+    VAES_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX2__" && echo | $(CXX) -march=native -dM -E - | grep -q "__VAES__" && echo "yes" || echo "no")
     AES_NI_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AES__" && echo "yes" || echo "no")
     # Check for AVX512F support for VAES512
     VAES512_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX512F__" && echo | $(CXX) -march=native -dM -E - | grep -q "__VAES__" && echo "yes" || echo "no")
@@ -26,7 +26,7 @@ ifeq ($(UNAME_M),x86_64)
 else ifeq ($(UNAME_M),amd64)
     # FreeBSD/Windows uses amd64 instead of x86_64
     PLATFORM = x86_64
-    VAES_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX2__" && echo | $(CXX) -march=native -dM -E - | grep -q "__AES__" && echo "yes" || echo "no")
+    VAES_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX2__" && echo | $(CXX) -march=native -dM -E - | grep -q "__VAES__" && echo "yes" || echo "no")
     AES_NI_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AES__" && echo "yes" || echo "no")
     VAES512_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX512F__" && echo | $(CXX) -march=native -dM -E - | grep -q "__VAES__" && echo "yes" || echo "no")
     X86_TESTS = test_generic test_aes_ni
@@ -43,6 +43,10 @@ else ifeq ($(UNAME_M),aarch64)
     # ARM64 Linux
     PLATFORM = arm64
     ARM_CRYPTO_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__ARM_FEATURE_CRYPTO" && echo "yes" || echo "no")
+    # x86-64 specific features not available on ARM64
+    VAES_SUPPORT = no
+    VAES512_SUPPORT = no
+    AES_NI_SUPPORT = no
     ARM_TESTS = test_generic
     ifeq ($(ARM_CRYPTO_SUPPORT),yes)
         ARM_TESTS += test_armv8
@@ -54,6 +58,10 @@ else ifeq ($(UNAME_M),arm64)
     PLATFORM = arm64
     # macOS ARM64 always has crypto extensions
     ARM_CRYPTO_SUPPORT = yes
+    # x86-64 specific features not available on ARM64
+    VAES_SUPPORT = no
+    VAES512_SUPPORT = no
+    AES_NI_SUPPORT = no
     ARM_TESTS = test_generic test_armv8
     CXXFLAGS += -DARM_CRYPTO_SUPPORTED
     TESTS = $(ARM_TESTS)
@@ -63,6 +71,7 @@ else
     TESTS = test_generic
     ARM_CRYPTO_SUPPORT = no
     VAES_SUPPORT = no
+    VAES512_SUPPORT = no
     AES_NI_SUPPORT = no
 endif
 
