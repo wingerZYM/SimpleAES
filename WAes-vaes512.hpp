@@ -571,15 +571,15 @@ private:
             __m128i iv;
             switch (i)
             {
-                case 0:
-                    iv = _mm512_extracti32x4_epi32(ivs, 0);
-                    break;
-                case 1:
-                    iv = _mm512_extracti32x4_epi32(ivs, 1);
-                    break;
-                case 2:
-                    iv = _mm512_extracti32x4_epi32(ivs, 2);
-                    break;
+            case 0:
+                iv = _mm512_extracti32x4_epi32(ivs, 0);
+                break;
+            case 1:
+                iv = _mm512_extracti32x4_epi32(ivs, 1);
+                break;
+            case 2:
+                iv = _mm512_extracti32x4_epi32(ivs, 2);
+                break;
             }
             _mm_storeu_si128(output128, _mm_xor_si128(state128, iv));
 		}
