@@ -81,11 +81,12 @@ AESNI_SRC = test_aes_ni.cpp
 VAES_SRC = test_vaes.cpp
 VAES512_SRC = test_vaes512.cpp
 ARMV8_SRC = test_armv8.cpp
+COMPARE_SRC = compare_implementations.cpp
 
 # Common dependencies
 COMMON_DEPS = test_data.hpp test_utils.hpp test_template.hpp
 
-.PHONY: all clean check-platform run-all run-generic run-aes-ni run-vaes run-vaes512 run-armv8 run-cross-compare run-perf-all run-perf-generic run-perf-aes-ni run-perf-vaes run-perf-vaes512 run-perf-armv8
+.PHONY: all clean check-platform run-all run-generic run-aes-ni run-vaes run-vaes512 run-armv8 cross-compare run-perf-all run-perf-generic run-perf-aes-ni run-perf-vaes run-perf-vaes512 run-perf-armv8 compare cmp-specific
 
 all: check-platform $(TESTS)
 
@@ -153,6 +154,10 @@ endif
 else
 	@echo "Skipping ARMv8 test - not available on $(PLATFORM) platform"
 endif
+
+# Build comparison tool
+compare: $(COMPARE_SRC)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o compare-implementations $(COMPARE_SRC)
 
 # Run individual functionality tests
 run-generic: test_generic
@@ -264,11 +269,6 @@ ifeq ($(PLATFORM),arm64)
 endif
 	@echo "=== All Performance Tests Completed ==="
 
-# Run everything using shell script
-run-complete: $(TESTS)
-	@chmod +x run_all_tests.sh
-	@./run_all_tests.sh
-
 # Quick test with smaller dataset
 quick-test: $(TESTS)
 	@echo "=== Quick Test ==="
@@ -296,11 +296,21 @@ ifeq ($(ARM_CRYPTO_SUPPORT),yes)
 endif
 endif
 
-# Cross-implementation comparison using shell script
-run-cross-compare: $(TESTS)
+# Cross-implementation comparison
+cross-compare: $(TESTS) compare
 	@echo "=== Running Cross-Implementation Comparison ==="
-	@chmod +x run_cross_comparison.sh
-	@./run_cross_comparison.sh
+	./compare-implementations
+
+# Cross-implementation comparison with specific implementations
+cmp-specific: $(TESTS) compare
+	@echo "=== Running Cross-Implementation Comparison (Specific) ==="
+	@echo "Usage: make cmp-specific IMPLS='Generic AES-NI'"
+	@if [ -z "$(IMPLS)" ]; then \
+		echo "Error: Please specify IMPLS variable"; \
+		echo "Example: make cmp-specific IMPLS='Generic AES-NI'"; \
+		exit 1; \
+	fi
+	./compare-implementations $(IMPLS)
 
 # Clean up test result files
 clean-results:
@@ -310,7 +320,7 @@ clean-results:
 	@echo "Test result files cleaned."
 
 clean: clean-results
-	rm -f $(TESTS)
+	rm -f $(TESTS) compare-implementations
 
 # Help target
 help:
@@ -321,20 +331,23 @@ help:
 	@echo "  test_vaes         - Build VAES implementation test (if supported)"
 	@echo "  test_vaes512      - Build VAES512 implementation test (if supported)"
 	@echo "  test_armv8        - Build ARMv8 implementation test (if supported)"
+	@echo "  compare           - Build comparison tool"
 	@echo "  run-all           - Run all functionality tests"
 	@echo "  run-generic       - Run generic implementation test"
 	@echo "  run-aes-ni        - Run AES-NI implementation test"
 	@echo "  run-vaes          - Run VAES implementation test"
 	@echo "  run-vaes512       - Run VAES512 implementation test"
 	@echo "  run-armv8         - Run ARMv8 implementation test"
-	@echo "  run-cross-compare - Run cross-implementation comparison"
+	@echo "  cross-compare     - Run cross-implementation comparison"
+	@echo "  cmp-specific      - Run comparison for specific implementations"
+	@echo "                      Usage: make cmp-specific IMPLS='Generic AES-NI'"
 	@echo "  run-perf-all      - Run all performance benchmarks"
 	@echo "  run-perf-generic  - Run generic performance benchmark"
 	@echo "  run-perf-aes-ni   - Run AES-NI performance benchmark"
 	@echo "  run-perf-vaes     - Run VAES performance benchmark"
 	@echo "  run-perf-vaes512  - Run VAES512 performance benchmark"
 	@echo "  run-perf-armv8    - Run ARMv8 performance benchmark"
-	@echo "  run-complete      - Run complete test suite (functionality + performance)"
+
 	@echo "  quick-test        - Run quick test with limited output"
 	@echo "  clean             - Remove all built executables and test result files"
 	@echo "  clean-results     - Remove only test result files"

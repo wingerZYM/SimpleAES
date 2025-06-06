@@ -166,7 +166,7 @@ To ensure consistency and correctness across different implementations, the proj
 - **`test_armv8.cpp`** - ARMv8 implementation tests
 
 #### Cross-Implementation Comparison Tools
-- **`compare_implementations.py`** - Python script for automated testing and comparison of different implementations
+- **`compare_implementations.cpp`** - Cross-implementation comparison tool
 - **`Makefile`** - Automated build and test system
 
 ### Test Features
@@ -213,23 +213,27 @@ make run-perf-vaes512  # VAES512 performance test
 
 #### Cross-Implementation Comparison
 ```bash
+# Build comparison tool
+make compare
+
 # Auto-detect and compare all available implementations
-python3 compare_implementations.py
+make cross-compare
+# or directly run:
+./compare-implementations
 
 # Manually specify implementations to compare
-python3 compare_implementations.py Generic AES-NI VAES VAES512
-
-# Use random test parameters
-python3 compare_implementations.py --random-params
+make cmp-specific IMPLS='Generic AES-NI VAES VAES512'
+# or directly run:
+./compare-implementations Generic AES-NI VAES VAES512
 
 # Keep test files for debugging
-python3 compare_implementations.py --keep-files --verbose
+./compare-implementations --keep-files --verbose
 ```
 
 #### Run Complete Test Suite
 ```bash
 make run-all         # Run functionality tests for all available implementations
-make run-cross-compare  # Run cross-implementation comparison
+make cross-compare   # Run cross-implementation comparison
 ```
 
 ### Test Output Example
@@ -245,7 +249,7 @@ Platform Detection:
   VAES512 Support: yes
   Building: Generic, AES-NI, VAES, VAES512 tests
 
-$ python3 compare_implementations.py
+$ ./compare-implementations
 AES Implementation Comparison Tool
 ==================================================
 Auto-detected implementations: Generic, AES-NI, VAES, VAES512

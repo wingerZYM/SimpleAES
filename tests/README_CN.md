@@ -20,10 +20,9 @@
 
 ### 构建和运行文件
 - `Makefile` - 构建系统，支持自动检测VAES支持
-- `run_all_tests.sh` - 运行所有测试的脚本
 
 ### 比较工具
-- `compare_implementations.py` - Python脚本，用于比较不同实现的结果
+- `compare_implementations.cpp` - 跨实现对比工具
 
 ## 测试内容
 
@@ -67,11 +66,6 @@ make run-all
 ### 运行所有性能测试
 ```bash
 make run-perf-all
-```
-
-### 运行完整测试套件
-```bash
-make run-complete     # 使用脚本运行所有测试
 ```
 
 ### 运行特定实现测试
@@ -146,25 +140,36 @@ make help
 
 ### 比较工具使用方法
 
+#### 构建比较工具
+```bash
+make compare
+```
+
 #### 自动检测并比较所有可用实现
 ```bash
-python3 compare_implementations.py
+make cross-compare
+# 或直接运行：
+./compare-implementations
 ```
 
 #### 指定要比较的实现
 ```bash
 # x86-64 平台示例
-python3 compare_implementations.py Generic AES-NI VAES VAES512
+make cmp-specific IMPLS='Generic AES-NI VAES VAES512'
+# 或直接运行：
+./compare-implementations Generic AES-NI VAES VAES512
 
 # ARM64 平台示例  
-python3 compare_implementations.py Generic ARMv8
+make cmp-specific IMPLS='Generic ARMv8'
+# 或直接运行：
+./compare-implementations Generic ARMv8
 ```
 
 #### 命令行选项
 
 **基本用法**：
 ```bash
-python3 compare_implementations.py [OPTIONS] [IMPLEMENTATIONS...]
+./compare-implementations [OPTIONS] [IMPLEMENTATIONS...]
 ```
 
 **可用选项**：
@@ -172,40 +177,34 @@ python3 compare_implementations.py [OPTIONS] [IMPLEMENTATIONS...]
 - **`--keep-files, -k`**: 保留测试结果文件，用于调试和分析
 - **`--clean-only, -c`**: 仅清理旧的测试结果文件然后退出
 - **`--verbose, -v`**: 显示详细输出信息
-- **`--random-params, -r`**: 使用随机生成的测试参数而不是默认值
 - **`--help, -h`**: 显示帮助信息
 
 #### 使用示例
 
 **标准比较（自动清理）**：
 ```bash
-python3 compare_implementations.py
+./compare-implementations
 # 自动检测实现，运行测试，比较结果，然后清理临时文件
 ```
 
 **保留测试文件用于调试**：
 ```bash
-python3 compare_implementations.py --keep-files
+./compare-implementations --keep-files
 ```
 
-**使用随机测试参数**：
+**详细输出**：
 ```bash
-python3 compare_implementations.py --random-params --verbose
+./compare-implementations --verbose
 ```
 
-#### 随机测试参数
+#### 比较功能特性
 
-使用随机测试参数可以：
-- **增加测试覆盖率**: 测试不同的key、IV和counter组合
-- **提高可信度**: 确保实现在各种输入下都能产生一致结果
-- **发现潜在问题**: 某些bug可能只在特定参数组合下出现
-
-当使用`--random-params`时，工具会生成：
-- **AES-128 Key**: 32个十六进制字符 (16字节)
-- **AES-192 Key**: 48个十六进制字符 (24字节)  
-- **AES-256 Key**: 64个十六进制字符 (32字节)
-- **IV**: 32个十六进制字符 (16字节)
-- **Counter**: 32个十六进制字符 (16字节)
+比较工具提供：
+- **自动平台检测**: 检测x86-64 vs ARM64平台
+- **硬件特性检测**: 检查CPU指令集支持
+- **实现自动发现**: 查找可用的实现
+- **详细结果比较**: 比较加密输出和往返完整性
+- **报告生成**: 创建详细的比较报告
 
 #### 文件管理
 
@@ -221,8 +220,14 @@ python3 compare_implementations.py --random-params --verbose
 # 检查平台和可用实现
 make check-platform
 
+# 构建比较工具
+make compare
+
 # 运行完整的跨实现比较
-make run-cross-compare
+make cross-compare
+
+# 运行指定实现的比较
+make cmp-specific IMPLS='Generic AES-NI'
 
 # 清理测试结果文件
 make clean-results
@@ -322,7 +327,7 @@ Skipping AES-NI test - not available on arm64 platform
 **调试技巧**：
 ```bash
 # 保留文件进行检查
-python3 compare_implementations.py --keep-files --verbose
+./compare-implementations --keep-files --verbose
 
 # 查看特定实现的详细结果
 cat test_results_Generic.txt

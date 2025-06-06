@@ -399,7 +399,7 @@ private:
             return 0;
         }
 
-        static const auto bswap_epi64 = _mm512_setr_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
+        static const auto bswap_epi64 = _mm512_broadcast_i32x4(_mm_setr_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8));
         static const auto increment = _mm512_set_epi64(4, 0, 4, 0, 4, 0, 4, 0);
         auto counters = _mm512_add_epi64(_mm512_shuffle_epi8(_mm512_broadcast_i32x4(m_iv), bswap_epi64), _mm512_set_epi64(3, 0, 2, 0, 1, 0, 0, 0));
 

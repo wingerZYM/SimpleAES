@@ -22,10 +22,9 @@ This test suite is designed to verify multiple AES implementations across differ
 
 ### Build and Run Files
 - `Makefile` - Build system with automatic VAES support detection
-- `run_all_tests.sh` - Script to run all tests
 
 ### Comparison Tool
-- `compare_implementations.py` - Python script to compare results from different implementations
+- `compare_implementations.cpp` - Cross-implementation comparison tool
 
 ## Test Coverage
 
@@ -71,10 +70,7 @@ make run-all
 make run-perf-all
 ```
 
-### Run Complete Test Suite
-```bash
-make run-complete     # Run all tests using script
-```
+
 
 ### Run Specific Implementation Tests
 ```bash
@@ -148,25 +144,36 @@ The tool automatically detects the current platform and only compares available 
 
 ### Comparison Tool Usage
 
+#### Build the comparison tool
+```bash
+make compare
+```
+
 #### Auto-detect and compare all available implementations
 ```bash
-python3 compare_implementations.py
+make cross-compare
+# or directly run:
+./compare-implementations
 ```
 
 #### Specify implementations to compare
 ```bash
 # x86-64 platform example
-python3 compare_implementations.py Generic AES-NI VAES VAES512
+make cmp-specific IMPLS='Generic AES-NI VAES VAES512'
+# or directly run:
+./compare-implementations Generic AES-NI VAES VAES512
 
 # ARM64 platform example
-python3 compare_implementations.py Generic ARMv8
+make cmp-specific IMPLS='Generic ARMv8'
+# or directly run:
+./compare-implementations Generic ARMv8
 ```
 
 #### Command Line Options
 
 **Basic Usage**:
 ```bash
-python3 compare_implementations.py [OPTIONS] [IMPLEMENTATIONS...]
+./compare-implementations [OPTIONS] [IMPLEMENTATIONS...]
 ```
 
 **Available Options**:
@@ -174,40 +181,34 @@ python3 compare_implementations.py [OPTIONS] [IMPLEMENTATIONS...]
 - **`--keep-files, -k`**: Keep test result files for debugging and analysis
 - **`--clean-only, -c`**: Only clean old test result files then exit
 - **`--verbose, -v`**: Show detailed output information
-- **`--random-params, -r`**: Use randomly generated test parameters instead of defaults
 - **`--help, -h`**: Show help information
 
 #### Usage Examples
 
 **Standard comparison (auto-clean)**:
 ```bash
-python3 compare_implementations.py
+./compare-implementations
 # Auto-detect implementations, run tests, compare results, then clean temporary files
 ```
 
 **Keep test files for debugging**:
 ```bash
-python3 compare_implementations.py --keep-files
+./compare-implementations --keep-files
 ```
 
-**Use random test parameters**:
+**Verbose output**:
 ```bash
-python3 compare_implementations.py --random-params --verbose
+./compare-implementations --verbose
 ```
 
-#### Random Test Parameters
+#### Comparison Features
 
-Using random test parameters can:
-- **Increase test coverage**: Test different key, IV, and counter combinations
-- **Improve confidence**: Ensure implementations produce consistent results under various inputs
-- **Discover potential issues**: Some bugs may only appear with specific parameter combinations
-
-When using `--random-params`, the tool generates:
-- **AES-128 Key**: 32 hexadecimal characters (16 bytes)
-- **AES-192 Key**: 48 hexadecimal characters (24 bytes)
-- **AES-256 Key**: 64 hexadecimal characters (32 bytes)
-- **IV**: 32 hexadecimal characters (16 bytes)
-- **Counter**: 32 hexadecimal characters (16 bytes)
+The comparison tool provides:
+- **Automatic platform detection**: Detects x86-64 vs ARM64 platforms
+- **Hardware feature detection**: Checks CPU instruction set support
+- **Implementation auto-discovery**: Finds available implementations
+- **Detailed result comparison**: Compares cipher outputs and roundtrip integrity
+- **Report generation**: Creates detailed comparison reports
 
 #### File Management
 
@@ -223,8 +224,14 @@ By default, the tool automatically cleans these temporary files after completing
 # Check platform and available implementations
 make check-platform
 
+# Build comparison tool
+make compare
+
 # Run complete cross-implementation comparison
-make run-cross-compare
+make cross-compare
+
+# Run comparison for specific implementations
+make cmp-specific IMPLS='Generic AES-NI'
 
 # Clean test result files
 make clean-results
@@ -324,7 +331,7 @@ This is normal; the tool automatically skips unsupported implementations based o
 **Debugging tips**:
 ```bash
 # Keep files for inspection
-python3 compare_implementations.py --keep-files --verbose
+./compare-implementations --keep-files --verbose
 
 # Check specific implementation results
 cat test_results_Generic.txt

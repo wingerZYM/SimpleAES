@@ -147,7 +147,7 @@ c++ -std=c++11 test.cpp
 - **`test_armv8.cpp`** - ARMv8实现测试
 
 #### 跨实现比较工具
-- **`compare_implementations.py`** - Python脚本，自动运行和比较不同实现的结果
+- **`compare_implementations.cpp`** - 跨实现对比工具
 - **`Makefile`** - 自动化构建和测试系统
 
 ### 测试功能
@@ -194,23 +194,27 @@ make run-perf-vaes512  # VAES512性能测试
 
 #### 跨实现比较
 ```bash
+# 构建比较工具
+make compare
+
 # 自动检测并比较所有可用实现
-python3 compare_implementations.py
+make cross-compare
+# 或直接运行：
+./compare-implementations
 
 # 手动指定要比较的实现
-python3 compare_implementations.py Generic AES-NI VAES VAES512
-
-# 使用随机测试参数
-python3 compare_implementations.py --random-params
+make cmp-specific IMPLS='Generic AES-NI VAES VAES512'
+# 或直接运行：
+./compare-implementations Generic AES-NI VAES VAES512
 
 # 保留测试文件用于调试
-python3 compare_implementations.py --keep-files --verbose
+./compare-implementations --keep-files --verbose
 ```
 
 #### 运行完整测试套件
 ```bash
 make run-all         # 运行所有可用实现的功能测试
-make run-cross-compare  # 运行跨实现比较
+make cross-compare   # 运行跨实现比较
 ```
 
 ### 测试输出示例
@@ -226,7 +230,7 @@ Platform Detection:
   VAES512 Support: yes
   Building: Generic, AES-NI, VAES, VAES512 tests
 
-$ python3 compare_implementations.py
+$ ./compare-implementations
 AES Implementation Comparison Tool
 ==================================================
 Auto-detected implementations: Generic, AES-NI, VAES, VAES512
