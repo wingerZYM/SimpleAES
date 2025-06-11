@@ -435,7 +435,7 @@ private:
             return 0;
         }
 
-        auto block = static_cast<int64_t>(inLength) / 16 - 1;
+        auto block = static_cast<int64_t>(inLength / 16) - 1;
 
         // sum padding length
         auto state128 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in) + block);
@@ -497,7 +497,7 @@ private:
             return 0;
         }
 
-        auto block = static_cast<int64_t>(inLength) / 16 - 1;
+        auto block = static_cast<int64_t>(inLength / 16) - 1;
         auto input128 = reinterpret_cast<const __m128i*>(in);
 
         // sum padding length
@@ -547,7 +547,7 @@ private:
         auto piv512 = reinterpret_cast<const __m512i*>(input128 + 3);
 
 		auto len = inLength - 16;
-        __m512i ivs = _mm512_castsi128_si512(m_iv);
+        auto ivs = _mm512_castsi128_si512(m_iv);
         ivs = _mm512_inserti32x4(ivs, _mm_loadu_si128(input128), 1);
         ivs = _mm512_inserti32x4(ivs, _mm_loadu_si128(input128 + 1), 2);
         ivs = _mm512_inserti32x4(ivs, _mm_loadu_si128(input128 + 2), 3);

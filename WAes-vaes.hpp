@@ -440,7 +440,7 @@ private:
             return 0;
         }
 
-        auto block = static_cast<int64_t>(inLength) / 16 - 1;
+        auto block = static_cast<int64_t>(inLength / 16) - 1;
 
         // sum padding length
         auto state128 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in) + block);
@@ -500,7 +500,7 @@ private:
             return 0;
         }
 
-        auto block = static_cast<int64_t>(inLength) / 16 - 1;
+        auto block = static_cast<int64_t>(inLength / 16) - 1;
         auto input128 = reinterpret_cast<const __m128i*>(in);
 
         // sum padding length

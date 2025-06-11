@@ -407,7 +407,7 @@ private:
 			return 0;
 		}
 
-		auto len = static_cast<int64_t>(inLength) / 16 - 1;
+		auto len = static_cast<int64_t>(inLength / 16) - 1;
 		auto input = reinterpret_cast<const __m128i*>(in);
 
 		// sum padding length
@@ -459,7 +459,7 @@ private:
 			return 0;
 		}
 
-		auto len = static_cast<int64_t>(inLength) / 16 - 1;
+		auto len = static_cast<int64_t>(inLength / 16) - 1;
 		auto input = reinterpret_cast<const __m128i*>(in);
 
 		// sum padding length
