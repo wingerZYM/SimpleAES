@@ -253,9 +253,9 @@ private:
     void cipher256(__m256i& state) const
     {
         state = _mm256_xor_si256(state, m_w256[0]);
-        for (int i = 1; i < Nr; ++i)
+        for (uint8_t r = 1; r < Nr; ++r)
         {
-            state = _mm256_aesenc_epi128(state, m_w256[i]);
+            state = _mm256_aesenc_epi128(state, m_w256[r]);
         }
         state = _mm256_aesenclast_epi128(state, m_w256[Nr]);
     }
@@ -264,9 +264,9 @@ private:
     void invCipher256(__m256i& state) const
     {
         state = _mm256_xor_si256(state, m_w256[Nr]);
-        for (int i = Nr - 1; i > 0; --i)
+        for (uint8_t r = Nr + 1; r < Nr * 2; ++r)
         {
-            state = _mm256_aesdec_epi128(state, m_w256[Nr * 2 - i]);
+            state = _mm256_aesdec_epi128(state, m_w256[r]);
         }
         state = _mm256_aesdeclast_epi128(state, m_w256[0]);
     }
@@ -275,9 +275,9 @@ private:
     void cipher128(__m128i& state) const
     {
         state = _mm_xor_si128(state, m_w128[0]);
-        for (int i = 1; i < Nr; ++i)
+        for (uint8_t r = 1; r < Nr; ++r)
         {
-            state = _mm_aesenc_si128(state, m_w128[i]);
+            state = _mm_aesenc_si128(state, m_w128[r]);
         }
         state = _mm_aesenclast_si128(state, m_w128[Nr]);
     }
@@ -286,9 +286,9 @@ private:
     void invCipher128(__m128i& state) const
     {
         state = _mm_xor_si128(state, m_w128[Nr]);
-        for (int i = Nr - 1; i > 0; --i)
+        for (uint8_t r = Nr + 1; r < Nr * 2; ++r)
         {
-            state = _mm_aesdec_si128(state, m_w128[Nr * 2 - i]);
+            state = _mm_aesdec_si128(state, m_w128[r]);
         }
         state = _mm_aesdeclast_si128(state, m_w128[0]);
     }

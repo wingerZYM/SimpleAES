@@ -508,11 +508,11 @@ private:
 		iv = m_iv;
 		for (int i = 0; i < len; ++i, ++input, ++output)
 		{
-			state = _mm_loadu_si128(input);
+			auto niv = state = _mm_loadu_si128(input);
 			invCipher(state);
 			_mm_storeu_si128(output, _mm_xor_si128(state, iv));
 
-			iv = _mm_loadu_si128(input);
+			iv = niv;
 		}
 
 		return outLength;
