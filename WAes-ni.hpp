@@ -175,11 +175,15 @@ public:
 	~CWAes() = default;
 
 	size_t SumCipherLength(size_t nInLen) const {
-	constexpr size_t blockSize = Nb * 4;
-	if (m_padding == Padding::Zeros)
-		return ((nInLen + blockSize - 1) / blockSize) * blockSize;
-	else // PKCS7
-		return ((nInLen / blockSize) + 1) * blockSize;
+		constexpr size_t blockSize = Nb * 4;
+		if (m_mode == Mode::CTR) {
+		  // In CTR mode, the length is not padded.
+		  return nInLen;
+		} else if (m_padding == Padding::Zeros) {
+		  return ((nInLen + blockSize - 1) / blockSize) * blockSize;
+		} else {  // PKCS7
+		  return ((nInLen / blockSize) + 1) * blockSize;
+		}
 	}
 
 	// Sets the counter value when in CBC mode. 
@@ -374,10 +378,10 @@ private:
 
 		auto counter = _mm_shuffle_epi8(m_iv, bswap_epi64);
 
-		int64_t len = inLength / 16;
+		int64_t len = inLength;
 		auto input = reinterpret_cast<const __m128i*>(in);
 		auto output = reinterpret_cast<__m128i*>(out);
-		for (int64_t i = 0; i < len; ++i, ++input, ++output)
+		for (; len >= 16; len -= 16, ++input, ++output)
 		{
 			auto state = _mm_shuffle_epi8(counter, bswap_epi64);
 			cipher(state);
@@ -386,12 +390,11 @@ private:
 			counter = _mm_add_epi64(counter, one);
 		}
 
-		int8_t endLen = inLength % 16;
-		if (endLen)
+		if (len)
 		{
 			auto state = _mm_shuffle_epi8(counter, bswap_epi64);
 			cipher(state);
-			for (int8_t i = 0; i < endLen; ++i)
+			for (int8_t i = 0; i < len; ++i)
 			{
 				reinterpret_cast<uint8_t*>(output)[i] = reinterpret_cast<const uint8_t*>(input)[i] ^ reinterpret_cast<uint8_t*>(&state)[i];
 			}

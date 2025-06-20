@@ -486,6 +486,80 @@ void runImplementationTests(const std::string& implementationName) {
     summary.print(implementationName + " AES Implementation");
 }
 
+// Generate large test data for performance benchmarks
+std::vector<uint8_t> generateLargeTestData(size_t size) {
+    std::vector<uint8_t> data(size);
+    
+    // Fill with non-zero pattern to avoid zero padding issues
+    for (size_t i = 0; i < size; ++i) {
+        data[i] = static_cast<uint8_t>((i % 255) + 1); // Range 1-255, avoiding 0
+    }
+    
+    return data;
+}
+
+// Enhanced benchmark function for large data
+template<int KeySize>
+TestResult benchmarkLargeData(const uint8_t* key, size_t keyLen, size_t dataSize, 
+                             const std::string& mode, Padding padding, const std::string& implName,
+                             int iterations = 1) {
+    (void)implName; // Suppress unused parameter warning
+    
+    // Generate large test data
+    auto testData = generateLargeTestData(dataSize);
+    
+    CWAes<KeySize> aes(key, keyLen, nullptr, 0, padding);
+    
+    // Set mode
+    if (mode == "CBC") {
+        aes.SetIV(getCurrentIV(), IV_SIZE);
+    } else if (mode == "CTR") {
+        aes.SetCounter(getCurrentCounter(), COUNTER_SIZE);
+    }
+    
+    // Prepare buffers
+    size_t maxCipherLen = (mode == "CTR") ? dataSize : aes.SumCipherLength(dataSize);
+    std::vector<uint8_t> ciphertext(maxCipherLen);
+    std::vector<uint8_t> decrypted(dataSize);
+    
+    Timer timer;
+    
+    // Warm up with smaller iterations for large data
+    for (int i = 0; i < 3; i++) {
+        size_t cipherLen = aes.Cipher(testData.data(), dataSize, ciphertext.data(), ciphertext.size());
+        aes.InvCipher(ciphertext.data(), cipherLen, decrypted.data(), decrypted.size());
+    }
+    
+    // Benchmark encryption
+    timer.start();
+    size_t finalCipherLen = 0;
+    for (int i = 0; i < iterations; i++) {
+        finalCipherLen = aes.Cipher(testData.data(), dataSize, ciphertext.data(), ciphertext.size());
+    }
+    double encryptTime = timer.elapsed() / iterations;
+    
+    // Benchmark decryption
+    timer.start();
+    for (int i = 0; i < iterations; i++) {
+        aes.InvCipher(ciphertext.data(), finalCipherLen, decrypted.data(), decrypted.size());
+    }
+    double decryptTime = timer.elapsed() / iterations;
+    
+    // Verify correctness
+    bool correct = compareData(testData, decrypted);
+    if (!correct) {
+        return TestResult(false, "Decryption verification failed for large data");
+    }
+    
+    // Calculate throughput (MB/s)
+    double totalTimeSeconds = (encryptTime + decryptTime) / 1000.0;
+    double dataSizeMB = (dataSize * 2.0) / (1024.0 * 1024.0); // *2 for encrypt+decrypt
+    double throughputMBps = dataSizeMB / totalTimeSeconds;
+    
+    return TestResult(true, "Throughput: " + std::to_string(throughputMBps) + " MB/s", 
+                     encryptTime, decryptTime, dataSize);
+}
+
 void runPerformanceTests(const std::string& implementationName) {
     std::cout << "\n=== " << implementationName << " Performance Benchmark ===" << std::endl;
     
@@ -503,9 +577,10 @@ void runPerformanceTests(const std::string& implementationName) {
     };
     
     std::string modes[] = {"ECB", "CBC", "CTR"};
-    std::vector<size_t> perfSizes = {1024, 4096, 16384, 65536}; // Larger sizes for meaningful performance data
+    std::vector<size_t> perfSizes = {1024, 4096, 16384, 65536}; // Regular performance sizes
     
-    // Print header
+    // Print header for regular performance tests
+    std::cout << "\n--- Regular Performance Tests ---" << std::endl;
     std::cout << std::left << std::setw(8) << "Mode" 
               << std::setw(8) << "KeySize" 
               << std::setw(10) << "DataSize" 
@@ -539,4 +614,53 @@ void runPerformanceTests(const std::string& implementationName) {
             }
         }
     }
+    
+    // 100MB Performance Benchmark
+    std::cout << "\n--- 100MB Large Data Performance Benchmark ---" << std::endl;
+    std::cout << "Testing with 100MB data size for realistic throughput measurement..." << std::endl;
+    std::cout << std::left << std::setw(8) << "Mode" 
+              << std::setw(8) << "KeySize" 
+              << std::setw(12) << "Encrypt(ms)" 
+              << std::setw(12) << "Decrypt(ms)" 
+              << std::setw(20) << "Throughput(MB/s)" 
+              << std::setw(12) << "Status" << std::endl;
+    std::cout << std::string(75, '-') << std::endl;
+    
+    const size_t LARGE_DATA_SIZE = 100 * 1024 * 1024; // 100MB
+    
+    for (const auto& keyConfig : keys) {
+        for (const auto& mode : modes) {
+            TestResult result;
+            
+            std::cout << std::left << std::setw(8) << mode
+                      << std::setw(8) << keyConfig.name << std::flush;
+            
+            switch (keyConfig.keySize) {
+                case 128:
+                    result = benchmarkLargeData<128>(keyConfig.key, keyConfig.keyLen, 
+                                                   LARGE_DATA_SIZE, mode, Padding::PKCS7, implementationName);
+                    break;
+                case 256:
+                    result = benchmarkLargeData<256>(keyConfig.key, keyConfig.keyLen, 
+                                                   LARGE_DATA_SIZE, mode, Padding::PKCS7, implementationName);
+                    break;
+            }
+            
+            if (result.success) {
+                std::cout << std::setw(12) << std::fixed << std::setprecision(1) << result.encryptTime
+                          << std::setw(12) << result.decryptTime
+                          << std::setw(20) << result.message.substr(result.message.find(":") + 2)
+                          << std::setw(12) << "PASS" << std::endl;
+            } else {
+                std::cout << std::setw(12) << "N/A"
+                          << std::setw(12) << "N/A"
+                          << std::setw(20) << "N/A"
+                          << std::setw(12) << "FAIL" << std::endl;
+                std::cout << "    Error: " << result.message << std::endl;
+            }
+        }
+    }
+    
+    std::cout << "\nNote: 100MB benchmark practical testing time." << std::endl;
+    std::cout << "Throughput includes both encryption and decryption operations." << std::endl;
 } 

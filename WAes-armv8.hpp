@@ -274,10 +274,14 @@ class CWAes {
 
   size_t SumCipherLength(size_t nInLen) const {
     constexpr size_t blockSize = Nb * 4;
-    if (m_padding == Padding::Zeros)
-        return ((nInLen + blockSize - 1) / blockSize) * blockSize;
-    else // PKCS7
-        return ((nInLen / blockSize) + 1) * blockSize;
+    if (m_mode == Mode::CTR) {
+      // In CTR mode, the length is not padded.
+      return nInLen;
+    } else if (m_padding == Padding::Zeros) {
+      return ((nInLen + blockSize - 1) / blockSize) * blockSize;
+    } else {  // PKCS7
+      return ((nInLen / blockSize) + 1) * blockSize;
+    }
   }
 
   // Sets the counter value when in CBC mode.

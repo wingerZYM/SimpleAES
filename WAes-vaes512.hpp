@@ -177,11 +177,15 @@ public:
     }
 
     size_t SumCipherLength(size_t nInLen) const {
-        constexpr size_t blockSize = Nb * 4;
-        if (m_padding == Padding::Zeros)
-            return ((nInLen + blockSize - 1) / blockSize) * blockSize;
-        else // PKCS7
-            return ((nInLen / blockSize) + 1) * blockSize;
+      constexpr size_t blockSize = Nb * 4;
+      if (m_mode == Mode::CTR) {
+        // In CTR mode, the length is not padded.
+        return nInLen;
+      } else if (m_padding == Padding::Zeros) {
+        return ((nInLen + blockSize - 1) / blockSize) * blockSize;
+      } else {  // PKCS7
+        return ((nInLen / blockSize) + 1) * blockSize;
+      }
     }
 
     void SetIV(const void* iv, size_t length)

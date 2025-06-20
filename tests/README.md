@@ -52,6 +52,26 @@ Test various data lengths to verify all scenarios:
 - Multiple blocks (32, 48, 64, 80, 96, 112, 128 bytes)
 - Large datasets (256+ bytes for VAES 256-bit parallel processing, 512+ bytes for VAES512 512-bit parallel processing)
 
+### Performance Testing
+Each implementation includes comprehensive performance benchmarks:
+
+#### Regular Performance Tests
+- **Small to Medium Data**: 1KB, 4KB, 16KB, 64KB
+- **Multiple Iterations**: 100 iterations for accurate timing
+- **Detailed Metrics**: Separate encryption/decryption timing and throughput calculation
+
+#### 100MB Large Data Benchmark
+- **Realistic Throughput**: Tests with 100MB data size for real-world performance measurement
+- **Optimized Iterations**: Reduced to 1 iterations for practical testing time
+- **Comprehensive Coverage**: All AES modes (ECB, CBC, CTR) and key sizes (128-bit, 256-bit)
+- **Verification**: Includes correctness verification to ensure data integrity
+- **Performance Metrics**: 
+  - Individual encryption and decryption timing
+  - Combined throughput in MB/s (includes both operations)
+  - Pass/Fail status for each test
+
+The 100MB benchmark provides more accurate performance measurements for sustained operations and helps identify the real-world performance characteristics of each implementation.
+
 ## Usage
 
 ### Build Tests
@@ -93,15 +113,15 @@ make run-perf-armv8   # ARMv8 implementation performance test (ARM64, if support
 ### Run Individual Test Programs
 ```bash
 ./test_generic        # Functional test
-./test_generic perf   # Performance test
+./test_generic perf   # Performance test (includes 100MB benchmark)
 ./test_aes_ni         # Functional test (x86-64 only)
-./test_aes_ni perf    # Performance test (x86-64 only)
+./test_aes_ni perf    # Performance test (includes 100MB benchmark, x86-64 only)
 ./test_vaes           # Functional test (x86-64 only)
-./test_vaes perf      # Performance test (x86-64 only)
+./test_vaes perf      # Performance test (includes 100MB benchmark, x86-64 only)
 ./test_vaes512        # Functional test (x86-64 only)
-./test_vaes512 perf   # Performance test (x86-64 only)
+./test_vaes512 perf   # Performance test (includes 100MB benchmark, x86-64 only)
 ./test_armv8          # Functional test (ARM64 only)
-./test_armv8 perf     # Performance test (ARM64 only)
+./test_armv8 perf     # Performance test (includes 100MB benchmark, ARM64 only)
 ```
 
 ### Quick Test
