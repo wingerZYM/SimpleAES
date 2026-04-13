@@ -161,7 +161,7 @@ $(BINDIR)/test_armv8: $(ARMV8_SRC) $(COMMON_DEPS) ../WAes-armv8.hpp
 ifeq ($(PLATFORM),arm64)
 ifeq ($(ARM_CRYPTO_SUPPORT),yes)
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(ARMV8_SRC)
+	$(CXX) $(CXXFLAGS) -march=armv8-a+crypto $(INCLUDES) -o $@ $(ARMV8_SRC)
 else
 	@echo "Skipping ARMv8 test - no ARM crypto support detected"
 endif
