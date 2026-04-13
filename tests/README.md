@@ -22,9 +22,17 @@ This test suite is designed to verify multiple AES implementations across differ
 
 ### Build and Run Files
 - `Makefile` - Build system with automatic VAES support detection
+- `.gitignore` - Ignores the `out/` output directory
 
 ### Comparison Tool
 - `compare_implementations.cpp` - Cross-implementation comparison tool
+
+### Output Directory (generated, git-ignored)
+```
+out/
+├── bin/        ← compiled executables
+└── reports/    ← timestamped test reports
+```
 
 ## Test Coverage
 
@@ -110,18 +118,28 @@ make run-perf-vaes512 # VAES512 implementation performance test (x86-64, if supp
 make run-perf-armv8   # ARMv8 implementation performance test (ARM64, if supported)
 ```
 
+### Generate Timestamped Reports (functionality + performance saved to `out/reports/`)
+```bash
+make report-all       # Generate reports for all implementations
+make report-generic   # Generic report → out/reports/Generic_<timestamp>.txt
+make report-aes-ni    # AES-NI report → out/reports/AES-NI_<timestamp>.txt
+make report-vaes      # VAES report → out/reports/VAES_<timestamp>.txt
+make report-vaes512   # VAES512 report → out/reports/VAES512_<timestamp>.txt
+make report-armv8     # ARMv8 report → out/reports/ARMv8_<timestamp>.txt
+```
+
 ### Run Individual Test Programs
 ```bash
-./test_generic        # Functional test
-./test_generic perf   # Performance test (includes 100MB benchmark)
-./test_aes_ni         # Functional test (x86-64 only)
-./test_aes_ni perf    # Performance test (includes 100MB benchmark, x86-64 only)
-./test_vaes           # Functional test (x86-64 only)
-./test_vaes perf      # Performance test (includes 100MB benchmark, x86-64 only)
-./test_vaes512        # Functional test (x86-64 only)
-./test_vaes512 perf   # Performance test (includes 100MB benchmark, x86-64 only)
-./test_armv8          # Functional test (ARM64 only)
-./test_armv8 perf     # Performance test (includes 100MB benchmark, ARM64 only)
+./out/bin/test_generic        # Functional test
+./out/bin/test_generic perf   # Performance test (includes 100MB benchmark)
+./out/bin/test_aes_ni         # Functional test (x86-64 only)
+./out/bin/test_aes_ni perf    # Performance test (includes 100MB benchmark, x86-64 only)
+./out/bin/test_vaes            # Functional test (x86-64 only)
+./out/bin/test_vaes perf       # Performance test (includes 100MB benchmark, x86-64 only)
+./out/bin/test_vaes512         # Functional test (x86-64 only)
+./out/bin/test_vaes512 perf    # Performance test (includes 100MB benchmark, x86-64 only)
+./out/bin/test_armv8           # Functional test (ARM64 only)
+./out/bin/test_armv8 perf      # Performance test (includes 100MB benchmark, ARM64 only)
 ```
 
 ### Quick Test
@@ -129,14 +147,14 @@ make run-perf-armv8   # ARMv8 implementation performance test (ARM64, if support
 make quick-test       # Run simplified tests
 ```
 
-### Check VAES Support
+### Check Platform
 ```bash
-make check-vaes
+make check-platform
 ```
 
 ### Clean
 ```bash
-make clean
+make clean            # Remove entire out/ directory (binaries + reports)
 ```
 
 ### Help
@@ -173,7 +191,7 @@ make compare
 ```bash
 make cross-compare
 # or directly run:
-./compare-implementations
+./out/bin/compare-implementations
 ```
 
 #### Specify implementations to compare
@@ -181,12 +199,12 @@ make cross-compare
 # x86-64 platform example
 make cmp-specific IMPLS='Generic AES-NI VAES VAES512'
 # or directly run:
-./compare-implementations Generic AES-NI VAES VAES512
+./out/bin/compare-implementations Generic AES-NI VAES VAES512
 
 # ARM64 platform example
 make cmp-specific IMPLS='Generic ARMv8'
 # or directly run:
-./compare-implementations Generic ARMv8
+./out/bin/compare-implementations Generic ARMv8
 ```
 
 #### Command Line Options
@@ -207,18 +225,18 @@ make cmp-specific IMPLS='Generic ARMv8'
 
 **Standard comparison (auto-clean)**:
 ```bash
-./compare-implementations
+./out/bin/compare-implementations
 # Auto-detect implementations, run tests, compare results, then clean temporary files
 ```
 
 **Keep test files for debugging**:
 ```bash
-./compare-implementations --keep-files
+./out/bin/compare-implementations --keep-files
 ```
 
 **Verbose output**:
 ```bash
-./compare-implementations --verbose
+./out/bin/compare-implementations --verbose
 ```
 
 #### Comparison Features
@@ -232,9 +250,9 @@ The comparison tool provides:
 
 #### File Management
 
-The comparison tool generates:
-- **`test_results_<implementation_name>.txt`**: Detailed test results for each implementation
-- **`implementation_comparison_report.txt`**: Comparison results report
+When run via `make cross-compare`, the comparison tool writes to `out/reports/`:
+- **`out/reports/test_results_<impl>.txt`**: Detailed test results for each implementation
+- **`out/reports/implementation_comparison_report.txt`**: Comparison results report
 
 By default, the tool automatically cleans these temporary files after completing the comparison. Use `--keep-files` to retain them for debugging.
 
@@ -253,8 +271,8 @@ make cross-compare
 # Run comparison for specific implementations
 make cmp-specific IMPLS='Generic AES-NI'
 
-# Clean test result files
-make clean-results
+# Clean all build output and reports
+make clean
 ```
 
 ## Test Verification
@@ -351,10 +369,10 @@ This is normal; the tool automatically skips unsupported implementations based o
 **Debugging tips**:
 ```bash
 # Keep files for inspection
-./compare-implementations --keep-files --verbose
+./out/bin/compare-implementations --keep-files --verbose
 
 # Check specific implementation results
-cat test_results_Generic.txt
+cat out/reports/test_results_Generic.txt
 ```
 
 ## Extending Tests

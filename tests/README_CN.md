@@ -20,9 +20,17 @@
 
 ### 构建和运行文件
 - `Makefile` - 构建系统，支持自动检测VAES支持
+- `.gitignore` - 忽略 `out/` 输出目录
 
 ### 比较工具
 - `compare_implementations.cpp` - 跨实现对比工具
+
+### 输出目录（自动生成，已加入 git 忽略）
+```
+out/
+├── bin/        ← 编译后的可执行文件
+└── reports/    ← 带时间戳的测试报告
+```
 
 ## 测试内容
 
@@ -106,18 +114,28 @@ make run-perf-vaes512 # VAES512实现性能测试 (x86-64，如果支持)
 make run-perf-armv8   # ARMv8实现性能测试 (ARM64，如果支持)
 ```
 
+### 生成带时间戳的报告（功能测试 + 性能测试，保存到 `out/reports/`）
+```bash
+make report-all       # 为所有实现生成报告
+make report-generic   # 通用实现报告 → out/reports/Generic_<时间戳>.txt
+make report-aes-ni    # AES-NI 报告 → out/reports/AES-NI_<时间戳>.txt
+make report-vaes      # VAES 报告 → out/reports/VAES_<时间戳>.txt
+make report-vaes512   # VAES512 报告 → out/reports/VAES512_<时间戳>.txt
+make report-armv8     # ARMv8 报告 → out/reports/ARMv8_<时间戳>.txt
+```
+
 ### 运行单个测试程序
 ```bash
-./test_generic        # 功能测试
-./test_generic perf   # 性能测试（包含100MB基准测试）
-./test_aes_ni         # 功能测试 (仅x86-64)
-./test_aes_ni perf    # 性能测试（包含100MB基准测试，仅x86-64）
-./test_vaes           # 功能测试 (仅x86-64)
-./test_vaes perf      # 性能测试（包含100MB基准测试，仅x86-64）
-./test_vaes512        # 功能测试 (仅x86-64)
-./test_vaes512 perf   # 性能测试（包含100MB基准测试，仅x86-64）
-./test_armv8          # 功能测试 (仅ARM64)
-./test_armv8 perf     # 性能测试（包含100MB基准测试，仅ARM64）
+./out/bin/test_generic        # 功能测试
+./out/bin/test_generic perf   # 性能测试（包含100MB基准测试）
+./out/bin/test_aes_ni         # 功能测试 (仅x86-64)
+./out/bin/test_aes_ni perf    # 性能测试（包含100MB基准测试，仅x86-64）
+./out/bin/test_vaes            # 功能测试 (仅x86-64)
+./out/bin/test_vaes perf       # 性能测试（包含100MB基准测试，仅x86-64）
+./out/bin/test_vaes512         # 功能测试 (仅x86-64)
+./out/bin/test_vaes512 perf    # 性能测试（包含100MB基准测试，仅x86-64）
+./out/bin/test_armv8           # 功能测试 (仅ARM64)
+./out/bin/test_armv8 perf      # 性能测试（包含100MB基准测试，仅ARM64）
 ```
 
 ### 快速测试
@@ -125,14 +143,14 @@ make run-perf-armv8   # ARMv8实现性能测试 (ARM64，如果支持)
 make quick-test       # 运行简化的测试
 ```
 
-### 检查VAES支持
+### 检查平台
 ```bash
-make check-vaes
+make check-platform
 ```
 
 ### 清理
 ```bash
-make clean
+make clean            # 删除整个 out/ 目录（可执行文件 + 报告）
 ```
 
 ### 帮助
@@ -169,7 +187,7 @@ make compare
 ```bash
 make cross-compare
 # 或直接运行：
-./compare-implementations
+./out/bin/compare-implementations
 ```
 
 #### 指定要比较的实现
@@ -177,19 +195,19 @@ make cross-compare
 # x86-64 平台示例
 make cmp-specific IMPLS='Generic AES-NI VAES VAES512'
 # 或直接运行：
-./compare-implementations Generic AES-NI VAES VAES512
+./out/bin/compare-implementations Generic AES-NI VAES VAES512
 
 # ARM64 平台示例  
 make cmp-specific IMPLS='Generic ARMv8'
 # 或直接运行：
-./compare-implementations Generic ARMv8
+./out/bin/compare-implementations Generic ARMv8
 ```
 
 #### 命令行选项
 
 **基本用法**：
 ```bash
-./compare-implementations [OPTIONS] [IMPLEMENTATIONS...]
+./out/bin/compare-implementations [OPTIONS] [IMPLEMENTATIONS...]
 ```
 
 **可用选项**：
@@ -203,18 +221,18 @@ make cmp-specific IMPLS='Generic ARMv8'
 
 **标准比较（自动清理）**：
 ```bash
-./compare-implementations
+./out/bin/compare-implementations
 # 自动检测实现，运行测试，比较结果，然后清理临时文件
 ```
 
 **保留测试文件用于调试**：
 ```bash
-./compare-implementations --keep-files
+./out/bin/compare-implementations --keep-files
 ```
 
 **详细输出**：
 ```bash
-./compare-implementations --verbose
+./out/bin/compare-implementations --verbose
 ```
 
 #### 比较功能特性
@@ -228,9 +246,9 @@ make cmp-specific IMPLS='Generic ARMv8'
 
 #### 文件管理
 
-比较工具会生成：
-- **`test_results_<实现名>.txt`**: 每个实现的详细测试结果
-- **`implementation_comparison_report.txt`**: 比较结果报告
+通过 `make cross-compare` 运行时，比较工具将输出写入 `out/reports/`：
+- **`out/reports/test_results_<实现名>.txt`**: 每个实现的详细测试结果
+- **`out/reports/implementation_comparison_report.txt`**: 比较结果报告
 
 默认情况下，工具会在完成比较后自动清理这些临时文件。使用`--keep-files`保留它们用于调试。
 
@@ -249,8 +267,8 @@ make cross-compare
 # 运行指定实现的比较
 make cmp-specific IMPLS='Generic AES-NI'
 
-# 清理测试结果文件
-make clean-results
+# 清理所有构建产物和报告
+make clean
 ```
 
 ## 测试验证
@@ -347,10 +365,10 @@ Skipping AES-NI test - not available on arm64 platform
 **调试技巧**：
 ```bash
 # 保留文件进行检查
-./compare-implementations --keep-files --verbose
+./out/bin/compare-implementations --keep-files --verbose
 
 # 查看特定实现的详细结果
-cat test_results_Generic.txt
+cat out/reports/test_results_Generic.txt
 ```
 
 ## 扩展测试

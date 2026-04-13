@@ -158,7 +158,12 @@ void writeTestResultToFile(const std::string& implName, const std::string& testN
                           const std::vector<uint8_t>& input, const std::vector<uint8_t>& ciphertext,
                           const std::vector<uint8_t>& decrypted, const std::string& mode,
                           int keySize, const std::string& padding) {
-    std::string filename = "test_results_" + implName + ".txt";
+    std::string dir;
+    const char* envDir = std::getenv("TEST_OUTPUT_DIR");
+    if (envDir && envDir[0] != '\0') {
+        dir = std::string(envDir) + "/";
+    }
+    std::string filename = dir + "test_results_" + implName + ".txt";
     std::ofstream file(filename, std::ios::app);
     
     if (!file.is_open()) return;

@@ -60,8 +60,17 @@ private:
     bool random_params = false;
     std::vector<std::string> implementations;
 
+    // Return path with TEST_OUTPUT_DIR prefix if set
+    static std::string filePath(const std::string& filename) {
+        const char* dir = std::getenv("TEST_OUTPUT_DIR");
+        if (dir && dir[0] != '\0') {
+            return std::string(dir) + "/" + filename;
+        }
+        return filename;
+    }
+
 public:
-    ComparisonTool(bool verbose = false, bool keep_files = false) 
+    ComparisonTool(bool verbose = false, bool keep_files = false)
         : verbose(verbose), keep_files(keep_files) {}
 
     std::vector<TestRecord> parse_test_file(const std::string& filename) {
@@ -222,7 +231,7 @@ public:
         std::map<std::string, std::map<std::string, TestRecord>> all_records;
         
         for (const auto& impl : impls) {
-            std::string filename = "test_results_" + impl + ".txt";
+            std::string filename = filePath("test_results_" + impl + ".txt");
             auto records = parse_test_file(filename);
             
             for (const auto& record : records) {
@@ -378,7 +387,7 @@ public:
         }
 
         // Generate report file
-        std::ofstream report("implementation_comparison_report.txt");
+        std::ofstream report(filePath("implementation_comparison_report.txt"));
         if (report.is_open()) {
             report << "AES Implementation Comparison Report\n";
             report << std::string(50, '=') << "\n\n";
@@ -539,15 +548,15 @@ public:
 
         // Collect test result files
         for (const auto& impl : impls) {
-            std::string filename = "test_results_" + impl + ".txt";
+            std::string filename = filePath("test_results_" + impl + ".txt");
             if (file_exists(filename)) {
                 files_to_clean.push_back(filename);
             }
         }
 
         // Add report file
-        if (file_exists("implementation_comparison_report.txt")) {
-            files_to_clean.push_back("implementation_comparison_report.txt");
+        if (file_exists(filePath("implementation_comparison_report.txt"))) {
+            files_to_clean.push_back(filePath("implementation_comparison_report.txt"));
         }
 
         if (!files_to_clean.empty()) {
@@ -611,7 +620,7 @@ public:
 
         // Clean up old result files first
         for (const auto& impl : implementations) {
-            std::string filename = "test_results_" + impl + ".txt";
+            std::string filename = filePath("test_results_" + impl + ".txt");
             std::remove(filename.c_str());
         }
 
@@ -649,13 +658,13 @@ public:
         if (keep_files) {
             std::cout << "\nTest result files preserved:\n";
             for (const auto& impl : successful_runs) {
-                std::string filename = "test_results_" + impl + ".txt";
+                std::string filename = filePath("test_results_" + impl + ".txt");
                 if (file_exists(filename)) {
                     std::cout << "  - " << filename << "\n";
                 }
             }
-            if (file_exists("implementation_comparison_report.txt")) {
-                std::cout << "  - implementation_comparison_report.txt\n";
+            if (file_exists(filePath("implementation_comparison_report.txt"))) {
+                std::cout << "  - " << filePath("implementation_comparison_report.txt") << "\n";
             }
             std::cout << "\nUse 'make clean-results' or run with --clean-only to remove these files later.\n";
         }
