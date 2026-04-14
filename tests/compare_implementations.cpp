@@ -57,7 +57,6 @@ class ComparisonTool {
 private:
     bool verbose = false;
     bool keep_files = false;
-    bool random_params = false;
     std::vector<std::string> implementations;
 
     // Return path with TEST_OUTPUT_DIR prefix if set
