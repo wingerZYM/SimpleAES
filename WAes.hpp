@@ -304,103 +304,51 @@ class Aes {
 
 #define _vslliq_u8(a, imm) vextq_u8(vdupq_n_u8(0), a, (16 - imm))
 
-#ifndef __has_builtin
-#define __has_builtin(x) 0
-#endif  // !__has_builtin
-
-#if __has_builtin(__builtin_shufflevector)
-
-#define _vshuffle_pi32_u8(a, imm)                                          \
-  __extension__({                                                          \
-    int32x4_t in = vreinterpretq_s32_u8(a);                                \
-    int32x4_t out =                                                        \
-        __builtin_shufflevector(in, in, (imm) & (0x3), ((imm) >> 2) & 0x3, \
-                                ((imm) >> 4) & 0x3, ((imm) >> 6) & 0x3);   \
-    vreinterpretq_u8_s32(out);                                             \
-  })
-
-#define _vshuffle_pi64_u8(a, b, imm)                               \
-  vreinterpretq_u8_s64(__builtin_shufflevector(                    \
-      vreinterpretq_s64_u8(a), vreinterpretq_s64_u8(b), imm & 0x1, \
-      ((imm & 0x2) >> 1) + 2))
-
-#elif __has_builtin(__builtin_shuffle)
-
-#define _shuffle(type, a, b, ...) \
-  __extension__({                 \
-    type t = {__VA_ARGS__};       \
-    __builtin_shuffle(a, b, t);   \
-  })
-
-#define _vshuffle_pi32_u8(a, imm)                                      \
-  __extension__({                                                      \
-    int32x4_t in = vreinterpretq_s32_u8(a);                            \
-    int32x4_t out =                                                    \
-        _shuffle(int32x4_t, in, in, (imm) & (0x3), ((imm) >> 2) & 0x3, \
-                 ((imm) >> 4) & 0x3, ((imm) >> 6) & 0x3);              \
-    vreinterpretq_u8_s32(out);                                         \
-  })
-
-#define _vshuffle_pi64_u8(a, b, imm)                                \
-  vreinterpretq_u8_s64(_shuffle(int64x2_t, vreinterpretq_s64_u8(a), \
-                                vreinterpretq_s64_u8(b), imm & 0x1, \
-                                ((imm & 0x2) >> 1) + 2))
-#else
-
-inline uint8x16_t _vshuffle_pi32_u8(uint8x16_t a, const int imm) {
-  switch (imm) {  // imm only use 0x55, 0xaa, 0xff.
-    case 0x55:
-      return vreinterpretq_u8_s32(vdupq_laneq_s32(vreinterpretq_s32_u8(a), 1));
-    case 0xaa:
-      return vreinterpretq_u8_s32(vdupq_laneq_s32(vreinterpretq_s32_u8(a), 2));
-    case 0xff:
-      return vreinterpretq_u8_s32(vdupq_laneq_s32(vreinterpretq_s32_u8(a), 3));
-  }
-  return a;
+// {low 64 bits of a, low 64 bits of b}
+inline uint8x16_t _vzip_lo64_u8(uint8x16_t a, uint8x16_t b) {
+  return vreinterpretq_u8_u64(
+      vtrn1q_u64(vreinterpretq_u64_u8(a), vreinterpretq_u64_u8(b)));
 }
 
-#define _vshuffle_pi64_u8(a, b, imm)                                   \
-  vreinterpretq_u8_s64(vcombine_s64(                                   \
-      vcreate_s64(vgetq_lane_s64(vreinterpretq_s64_u8(a), imm & 0x1)), \
-      vcreate_s64(vgetq_lane_s64(vreinterpretq_s64_u8(b), (imm & 0x2) >> 1))))
+// {high 64 bits of a, low 64 bits of b}
+inline uint8x16_t _vzip_hi_lo64_u8(uint8x16_t a, uint8x16_t b) {
+  return vextq_u8(a, b, 8);
+}
 
-#endif
-
-inline uint8x16_t _vaeskeygenassist_u8(uint8x16_t a, const uint8_t rcon) {
+// AES-128 / AES-256 assistL: broadcast RotWord(SubWord(word3)) + rcon
+// After ShiftRows: S(o13)@9, S(o14)@6, S(o15)@3, S(o12)@12
+inline uint8x16_t _vkeyassist_rot3(uint8x16_t a, const uint8_t rcon) {
   a = vaeseq_u8(a, vdupq_n_u8(0));
-#if defined(_MSC_VER)
-  auto* u8 = reinterpret_cast<uint8_t*>(&a);
-  uint8x16_t dest = {
-      static_cast<uint64_t>(u8[0x4]) | (static_cast<uint64_t>(u8[0x1]) << 8) |
-          (static_cast<uint64_t>(u8[0xE]) << 16) |
-          (static_cast<uint64_t>(u8[0xB]) << 24) |
-          (static_cast<uint64_t>(u8[0x1]) << 32) |
-          (static_cast<uint64_t>(u8[0xE]) << 40) |
-          (static_cast<uint64_t>(u8[0xB]) << 48) |
-          (static_cast<uint64_t>(u8[0x4]) << 56),
-      static_cast<uint64_t>(u8[0xC]) | (static_cast<uint64_t>(u8[0x9]) << 8) |
-          (static_cast<uint64_t>(u8[0x6]) << 16) |
-          (static_cast<uint64_t>(u8[0x3]) << 24) |
-          (static_cast<uint64_t>(u8[0x9]) << 32) |
-          (static_cast<uint64_t>(u8[0x6]) << 40) |
-          (static_cast<uint64_t>(u8[0x3]) << 48) |
-          (static_cast<uint64_t>(u8[0xC]) << 56)};
-  uint8x16_t r = {static_cast<uint64_t>(rcon) << 32, static_cast<uint64_t>(rcon)
-                                                         << 32};
-#else
-  uint8x16_t dest = {
-      // Undo ShiftRows step from AESE and extract X1 and X3
-      a[0x4], a[0x1], a[0xE], a[0xB],  // SubBytes(X1)
-      a[0x1], a[0xE], a[0xB], a[0x4],  // ROT(SubBytes(X1))
-      a[0xC], a[0x9], a[0x6], a[0x3],  // SubBytes(X3)
-      a[0x9], a[0x6], a[0x3], a[0xC],  // ROT(SubBytes(X3))
-  };
-  uint8x16_t r = {
-      0, 0, 0, 0, rcon, 0, 0, 0, 0, 0, 0, 0, rcon, 0, 0, 0,
-  };
-#endif  // _MSC_VER
+  static const uint8_t idx[] = {9, 6, 3, 12, 9, 6, 3, 12, 9, 6, 3, 12, 9, 6, 3, 12};
+  a = vqtbl1q_u8(a, vld1q_u8(idx));
+  uint8x16_t rv = vdupq_n_u8(0);
+  rv = vsetq_lane_u8(rcon, rv, 0);
+  rv = vsetq_lane_u8(rcon, rv, 4);
+  rv = vsetq_lane_u8(rcon, rv, 8);
+  rv = vsetq_lane_u8(rcon, rv, 12);
+  return veorq_u8(a, rv);
+}
 
-  return veorq_u8(dest, r);
+// AES-192: broadcast RotWord(SubWord(word1)) + rcon
+// After ShiftRows: S(o5)@1, S(o6)@14, S(o7)@11, S(o4)@4
+inline uint8x16_t _vkeyassist_rot1(uint8x16_t a, const uint8_t rcon) {
+  a = vaeseq_u8(a, vdupq_n_u8(0));
+  static const uint8_t idx[] = {1, 14, 11, 4, 1, 14, 11, 4, 1, 14, 11, 4, 1, 14, 11, 4};
+  a = vqtbl1q_u8(a, vld1q_u8(idx));
+  uint8x16_t rv = vdupq_n_u8(0);
+  rv = vsetq_lane_u8(rcon, rv, 0);
+  rv = vsetq_lane_u8(rcon, rv, 4);
+  rv = vsetq_lane_u8(rcon, rv, 8);
+  rv = vsetq_lane_u8(rcon, rv, 12);
+  return veorq_u8(a, rv);
+}
+
+// AES-256 assistH: broadcast SubWord(word3), no RotWord, rcon always 0
+// After ShiftRows: S(o12)@12, S(o13)@9, S(o14)@6, S(o15)@3
+inline uint8x16_t _vkeyassist_sub3(uint8x16_t a) {
+  a = vaeseq_u8(a, vdupq_n_u8(0));
+  static const uint8_t idx[] = {12, 9, 6, 3, 12, 9, 6, 3, 12, 9, 6, 3, 12, 9, 6, 3};
+  return vqtbl1q_u8(a, vld1q_u8(idx));
 }
 
 template <int>
@@ -412,21 +360,21 @@ inline void keyExpansion<128>(const uint8_t* key, uint8x16_t* w) {
     a = veorq_u8(a, _vslliq_u8(a, 4));
     a = veorq_u8(a, _vslliq_u8(a, 4));
     a = veorq_u8(a, _vslliq_u8(a, 4));
-    a = veorq_u8(a, _vshuffle_pi32_u8(b, 0xff));
+    a = veorq_u8(a, b);
     return a;
   };
 
   w[0] = vld1q_u8(key);
-  w[1] = assist(w[0], _vaeskeygenassist_u8(w[0], 0x01));
-  w[2] = assist(w[1], _vaeskeygenassist_u8(w[1], 0x02));
-  w[3] = assist(w[2], _vaeskeygenassist_u8(w[2], 0x04));
-  w[4] = assist(w[3], _vaeskeygenassist_u8(w[3], 0x08));
-  w[5] = assist(w[4], _vaeskeygenassist_u8(w[4], 0x10));
-  w[6] = assist(w[5], _vaeskeygenassist_u8(w[5], 0x20));
-  w[7] = assist(w[6], _vaeskeygenassist_u8(w[6], 0x40));
-  w[8] = assist(w[7], _vaeskeygenassist_u8(w[7], 0x80));
-  w[9] = assist(w[8], _vaeskeygenassist_u8(w[8], 0x1b));
-  w[10] = assist(w[9], _vaeskeygenassist_u8(w[9], 0x36));
+  w[1] = assist(w[0], _vkeyassist_rot3(w[0], 0x01));
+  w[2] = assist(w[1], _vkeyassist_rot3(w[1], 0x02));
+  w[3] = assist(w[2], _vkeyassist_rot3(w[2], 0x04));
+  w[4] = assist(w[3], _vkeyassist_rot3(w[3], 0x08));
+  w[5] = assist(w[4], _vkeyassist_rot3(w[4], 0x10));
+  w[6] = assist(w[5], _vkeyassist_rot3(w[5], 0x20));
+  w[7] = assist(w[6], _vkeyassist_rot3(w[6], 0x40));
+  w[8] = assist(w[7], _vkeyassist_rot3(w[7], 0x80));
+  w[9] = assist(w[8], _vkeyassist_rot3(w[8], 0x1b));
+  w[10] = assist(w[9], _vkeyassist_rot3(w[9], 0x36));
 }
 
 template <>
@@ -435,44 +383,44 @@ inline void keyExpansion<192>(const uint8_t* key, uint8x16_t* w) {
     a = veorq_u8(a, _vslliq_u8(a, 0x4));
     a = veorq_u8(a, _vslliq_u8(a, 0x4));
     a = veorq_u8(a, _vslliq_u8(a, 0x4));
-    a = veorq_u8(a, _vshuffle_pi32_u8(c, 0x55));
+    a = veorq_u8(a, c);
     b = veorq_u8(b, _vslliq_u8(b, 0x4));
-    b = veorq_u8(b, _vshuffle_pi32_u8(a, 0xff));
+    b = veorq_u8(b, vreinterpretq_u8_u32(vdupq_laneq_u32(vreinterpretq_u32_u8(a), 3)));
   };
 
   uint8x16_t a, b;
   w[0] = a = vld1q_u8(key);
   w[1] = b = vld1q_u8(key + 16);
 
-  assist(a, b, _vaeskeygenassist_u8(b, 0x1));
-  w[1] = _vshuffle_pi64_u8(w[1], a, 0);
-  w[2] = _vshuffle_pi64_u8(a, b, 1);
+  assist(a, b, _vkeyassist_rot1(b, 0x1));
+  w[1] = _vzip_lo64_u8(w[1], a);
+  w[2] = _vzip_hi_lo64_u8(a, b);
 
-  assist(a, b, _vaeskeygenassist_u8(b, 0x2));
+  assist(a, b, _vkeyassist_rot1(b, 0x2));
   w[3] = a;
   w[4] = b;
 
-  assist(a, b, _vaeskeygenassist_u8(b, 0x4));
-  w[4] = _vshuffle_pi64_u8(w[4], a, 0);
-  w[5] = _vshuffle_pi64_u8(a, b, 1);
+  assist(a, b, _vkeyassist_rot1(b, 0x4));
+  w[4] = _vzip_lo64_u8(w[4], a);
+  w[5] = _vzip_hi_lo64_u8(a, b);
 
-  assist(a, b, _vaeskeygenassist_u8(b, 0x8));
+  assist(a, b, _vkeyassist_rot1(b, 0x8));
   w[6] = a;
   w[7] = b;
 
-  assist(a, b, _vaeskeygenassist_u8(b, 0x10));
-  w[7] = _vshuffle_pi64_u8(w[7], a, 0);
-  w[8] = _vshuffle_pi64_u8(a, b, 1);
+  assist(a, b, _vkeyassist_rot1(b, 0x10));
+  w[7] = _vzip_lo64_u8(w[7], a);
+  w[8] = _vzip_hi_lo64_u8(a, b);
 
-  assist(a, b, _vaeskeygenassist_u8(b, 0x20));
+  assist(a, b, _vkeyassist_rot1(b, 0x20));
   w[9] = a;
   w[10] = b;
 
-  assist(a, b, _vaeskeygenassist_u8(b, 0x40));
-  w[10] = _vshuffle_pi64_u8(w[10], a, 0);
-  w[11] = _vshuffle_pi64_u8(a, b, 1);
+  assist(a, b, _vkeyassist_rot1(b, 0x40));
+  w[10] = _vzip_lo64_u8(w[10], a);
+  w[11] = _vzip_hi_lo64_u8(a, b);
 
-  assist(a, b, _vaeskeygenassist_u8(b, 0x80));
+  assist(a, b, _vkeyassist_rot1(b, 0x80));
   w[12] = a;
 }
 
@@ -482,32 +430,32 @@ inline void keyExpansion<256>(const uint8_t* key, uint8x16_t* w) {
     a = veorq_u8(a, _vslliq_u8(a, 0x4));
     a = veorq_u8(a, _vslliq_u8(a, 0x4));
     a = veorq_u8(a, _vslliq_u8(a, 0x4));
-    a = veorq_u8(a, _vshuffle_pi32_u8(b, 0xff));
+    a = veorq_u8(a, b);
     return a;
   };
   auto assistH = [](const uint8x16_t& a, uint8x16_t c) {
     c = veorq_u8(c, _vslliq_u8(c, 0x4));
     c = veorq_u8(c, _vslliq_u8(c, 0x4));
     c = veorq_u8(c, _vslliq_u8(c, 0x4));
-    c = veorq_u8(c, _vshuffle_pi32_u8(_vaeskeygenassist_u8(a, 0x0), 0xaa));
+    c = veorq_u8(c, _vkeyassist_sub3(a));
     return c;
   };
 
   w[0] = vld1q_u8(key);
   w[1] = vld1q_u8(key + 16);
-  w[2] = assistL(w[0], _vaeskeygenassist_u8(w[1], 0x1));
+  w[2] = assistL(w[0], _vkeyassist_rot3(w[1], 0x1));
   w[3] = assistH(w[2], w[1]);
-  w[4] = assistL(w[2], _vaeskeygenassist_u8(w[3], 0x2));
+  w[4] = assistL(w[2], _vkeyassist_rot3(w[3], 0x2));
   w[5] = assistH(w[4], w[3]);
-  w[6] = assistL(w[4], _vaeskeygenassist_u8(w[5], 0x4));
+  w[6] = assistL(w[4], _vkeyassist_rot3(w[5], 0x4));
   w[7] = assistH(w[6], w[5]);
-  w[8] = assistL(w[6], _vaeskeygenassist_u8(w[7], 0x8));
+  w[8] = assistL(w[6], _vkeyassist_rot3(w[7], 0x8));
   w[9] = assistH(w[8], w[7]);
-  w[10] = assistL(w[8], _vaeskeygenassist_u8(w[9], 0x10));
+  w[10] = assistL(w[8], _vkeyassist_rot3(w[9], 0x10));
   w[11] = assistH(w[10], w[9]);
-  w[12] = assistL(w[10], _vaeskeygenassist_u8(w[11], 0x20));
+  w[12] = assistL(w[10], _vkeyassist_rot3(w[11], 0x20));
   w[13] = assistH(w[12], w[11]);
-  w[14] = assistL(w[12], _vaeskeygenassist_u8(w[13], 0x40));
+  w[14] = assistL(w[12], _vkeyassist_rot3(w[13], 0x40));
 }
 
 template <int N>
@@ -645,21 +593,13 @@ class WAesArmV8 final : public Aes {
     outLength = inLength;
 
     static const uint64x2_t one = {0, 1};
-    static const uint8x16_t bswap_epi64 = {
-#if defined(_MSC_VER)
-        0x0001020304050607ull, 0x08090a0b0c0d0e0full
-#else
-        7,  6,  5,  4,  3,  2, 1, 0, 15,
-        14, 13, 12, 11, 10, 9, 8
-#endif
-    };
-    auto counter = vreinterpretq_u64_u8(vqtbl1q_u8(m_iv, bswap_epi64));
+    auto counter = vreinterpretq_u64_u8(vrev64q_u8(m_iv));
 
     int64_t len = inLength / 16;
     auto input = reinterpret_cast<const uint8_t*>(in);
     auto output = reinterpret_cast<uint8_t*>(out);
     for (int64_t i = 0; i < len; ++i, input += 16, output += 16) {
-      auto state = vqtbl1q_u8(vreinterpretq_u8_u64(counter), bswap_epi64);
+      auto state = vrev64q_u8(vreinterpretq_u8_u64(counter));
       cipher(state);
       vst1q_u8(output, veorq_u8(vld1q_u8(input), state));
 
@@ -668,7 +608,7 @@ class WAesArmV8 final : public Aes {
 
     int8_t endLen = inLength % 16;
     if (endLen) {
-      auto state = vqtbl1q_u8(vreinterpretq_u8_u64(counter), bswap_epi64);
+      auto state = vrev64q_u8(vreinterpretq_u8_u64(counter));
       cipher(state);
       for (int8_t i = 0; i < endLen; ++i) {
         reinterpret_cast<uint8_t*>(output)[i] =
@@ -779,11 +719,11 @@ class WAesArmV8 final : public Aes {
 
     iv = m_iv;
     for (int i = 0; i < len; i += 16, input += 16, output += 16) {
-      state = vld1q_u8(input);
+      auto niv = state = vld1q_u8(input);
       invCipher(state);
       vst1q_u8(output, veorq_u8(state, iv));
 
-      iv = vld1q_u8(input);
+      iv = niv;
     }
 
     return true;
@@ -802,7 +742,8 @@ class WAesArmV8 final : public Aes {
   friend Ptr WAes::Create(Backend, const void*, size_t, const void*, size_t, Padding);
 };
 
-#else
+#endif  // defined(WAES_ARMV8)
+
 #if defined(WAES_X86_SIMD)
 
 // x86 AES implementation types (for runtime CPU feature detection)
@@ -2436,8 +2377,6 @@ class WAesGen final : public Aes {
   template <int>
   friend Ptr WAes::Create(Backend, const void*, size_t, const void*, size_t, Padding);
 };
-
-#endif
 
 }  // namespace detail
 
