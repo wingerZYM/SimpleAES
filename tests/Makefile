@@ -19,7 +19,7 @@ ifeq ($(UNAME_M),x86_64)
     AES_NI_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AES__" && echo "yes" || echo "no")
     # Check for AVX512F support for VAES512
     VAES512_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX512F__" && echo | $(CXX) -march=native -dM -E - | grep -q "__VAES__" && echo "yes" || echo "no")
-    X86_TESTS = test_generic test_aes_ni
+    X86_TESTS = test_generic test_aes_ni test_waes
     ifeq ($(VAES_SUPPORT),yes)
         X86_TESTS += test_vaes
         CXXFLAGS += -DVAES_SUPPORTED
@@ -35,7 +35,7 @@ else ifeq ($(UNAME_M),amd64)
     VAES_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX2__" && echo | $(CXX) -march=native -dM -E - | grep -q "__VAES__" && echo "yes" || echo "no")
     AES_NI_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AES__" && echo "yes" || echo "no")
     VAES512_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX512F__" && echo | $(CXX) -march=native -dM -E - | grep -q "__VAES__" && echo "yes" || echo "no")
-    X86_TESTS = test_generic test_aes_ni
+    X86_TESTS = test_generic test_aes_ni test_waes
     ifeq ($(VAES_SUPPORT),yes)
         X86_TESTS += test_vaes
         CXXFLAGS += -DVAES_SUPPORTED
@@ -53,7 +53,7 @@ else ifeq ($(UNAME_M),aarch64)
     VAES_SUPPORT = no
     VAES512_SUPPORT = no
     AES_NI_SUPPORT = no
-    ARM_TESTS = test_generic
+    ARM_TESTS = test_generic test_waes
     ifeq ($(ARM_CRYPTO_SUPPORT),yes)
         ARM_TESTS += test_armv8
         CXXFLAGS += -DARM_CRYPTO_SUPPORTED
@@ -68,13 +68,13 @@ else ifeq ($(UNAME_M),arm64)
     VAES_SUPPORT = no
     VAES512_SUPPORT = no
     AES_NI_SUPPORT = no
-    ARM_TESTS = test_generic test_armv8
+    ARM_TESTS = test_generic test_armv8 test_waes
     CXXFLAGS += -DARM_CRYPTO_SUPPORTED
     TESTS = $(ARM_TESTS)
 else
     # Fallback to generic only
     PLATFORM = unknown
-    TESTS = test_generic
+    TESTS = test_generic test_waes
     ARM_CRYPTO_SUPPORT = no
     VAES_SUPPORT = no
     VAES512_SUPPORT = no
@@ -90,12 +90,13 @@ AESNI_SRC = test_aes_ni.cpp
 VAES_SRC = test_vaes.cpp
 VAES512_SRC = test_vaes512.cpp
 ARMV8_SRC = test_armv8.cpp
+WAES_SRC = test_waes.cpp
 COMPARE_SRC = compare_implementations.cpp
 
 # Common dependencies
 COMMON_DEPS = test_data.hpp test_utils.hpp test_template.hpp
 
-.PHONY: all clean check-platform run-all run-generic run-aes-ni run-vaes run-vaes512 run-armv8 cross-compare run-perf-all run-perf-generic run-perf-aes-ni run-perf-vaes run-perf-vaes512 run-perf-armv8 compare cmp-specific report-generic report-aes-ni report-vaes report-vaes512 report-armv8 report-all
+.PHONY: all clean check-platform run-all run-generic run-aes-ni run-vaes run-vaes512 run-armv8 run-waes cross-compare run-perf-all run-perf-generic run-perf-aes-ni run-perf-vaes run-perf-vaes512 run-perf-armv8 run-perf-waes compare cmp-specific report-generic report-aes-ni report-vaes report-vaes512 report-armv8 report-waes report-all
 
 all: check-platform $(BINS)
 
@@ -169,6 +170,10 @@ else
 	@echo "Skipping ARMv8 test - not available on $(PLATFORM) platform"
 endif
 
+$(BINDIR)/test_waes: $(WAES_SRC) $(COMMON_DEPS) ../WAes.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(WAES_SRC)
+
 # Build comparison tool
 compare: $(BINDIR)/compare-implementations
 
@@ -209,6 +214,10 @@ else
 	@echo "ARMv8 tests not available - not available on $(PLATFORM) platform"
 endif
 
+run-waes: $(BINDIR)/test_waes
+	@echo "=== Running Unified (WAes.hpp) Implementation Tests ==="
+	./$(BINDIR)/test_waes
+
 # Run individual performance tests
 run-perf-generic: $(BINDIR)/test_generic
 	@echo "=== Running Generic Performance Tests ==="
@@ -242,6 +251,10 @@ else
 	@echo "ARMv8 performance tests not available - not available on $(PLATFORM) platform"
 endif
 
+run-perf-waes: $(BINDIR)/test_waes
+	@echo "=== Running Unified (WAes.hpp) Performance Tests ==="
+	./$(BINDIR)/test_waes perf
+
 # Run all functionality tests
 run-all: $(BINS)
 	@echo "=== Running All AES Implementation Tests ==="
@@ -262,6 +275,8 @@ ifeq ($(PLATFORM),arm64)
 	@$(MAKE) run-armv8
 	@echo ""
 endif
+	@$(MAKE) run-waes
+	@echo ""
 	@echo "=== All Functionality Tests Completed ==="
 
 # Run all performance tests
@@ -284,6 +299,8 @@ ifeq ($(PLATFORM),arm64)
 	@$(MAKE) run-perf-armv8
 	@echo ""
 endif
+	@$(MAKE) run-perf-waes
+	@echo ""
 	@echo "=== All Performance Tests Completed ==="
 
 # Quick test with smaller dataset
@@ -312,6 +329,9 @@ ifeq ($(ARM_CRYPTO_SUPPORT),yes)
 	@./$(BINDIR)/test_armv8 | head -20
 endif
 endif
+	@echo ""
+	@echo "Testing Unified (WAes.hpp) implementation..."
+	@./$(BINDIR)/test_waes | head -20
 
 # Cross-implementation comparison
 cross-compare: $(BINS) $(BINDIR)/compare-implementations
@@ -374,6 +394,12 @@ else
 	@echo "ARMv8 report not available - not available on $(PLATFORM) platform"
 endif
 
+report-waes: $(BINDIR)/test_waes
+	@mkdir -p $(REPORTDIR)
+	@echo "=== Generating Unified (WAes.hpp) Report: $(REPORTDIR)/WAes_$(TIMESTAMP).txt ==="
+	./$(BINDIR)/test_waes 2>&1 | tee $(REPORTDIR)/WAes_$(TIMESTAMP).txt
+	./$(BINDIR)/test_waes perf 2>&1 | tee -a $(REPORTDIR)/WAes_$(TIMESTAMP).txt
+
 report-all: $(BINS)
 	@echo "=== Generating All Reports ==="
 	@$(MAKE) report-generic
@@ -390,6 +416,7 @@ ifeq ($(ARM_CRYPTO_SUPPORT),yes)
 	@$(MAKE) report-armv8
 endif
 endif
+	@$(MAKE) report-waes
 	@echo "=== All Reports Saved to $(REPORTDIR)/ ==="
 
 clean:
@@ -410,12 +437,14 @@ help:
 	@echo "  run-vaes          - Run VAES implementation test"
 	@echo "  run-vaes512       - Run VAES512 implementation test"
 	@echo "  run-armv8         - Run ARMv8 implementation test"
+	@echo "  run-waes          - Run Unified (WAes.hpp) implementation test"
 	@echo "  run-perf-all      - Run all performance benchmarks"
 	@echo "  run-perf-generic  - Run generic performance benchmark"
 	@echo "  run-perf-aes-ni   - Run AES-NI performance benchmark"
 	@echo "  run-perf-vaes     - Run VAES performance benchmark"
 	@echo "  run-perf-vaes512  - Run VAES512 performance benchmark"
 	@echo "  run-perf-armv8    - Run ARMv8 performance benchmark"
+	@echo "  run-perf-waes     - Run Unified (WAes.hpp) performance benchmark"
 	@echo ""
 	@echo "Reports (saved to $(REPORTDIR)/<Impl>_<timestamp>.txt):"
 	@echo "  report-all        - Generate reports for all implementations"
@@ -424,6 +453,7 @@ help:
 	@echo "  report-vaes       - Generate VAES report (func + perf)"
 	@echo "  report-vaes512    - Generate VAES512 report (func + perf)"
 	@echo "  report-armv8      - Generate ARMv8 report (func + perf)"
+	@echo "  report-waes       - Generate Unified (WAes.hpp) report (func + perf)"
 	@echo ""
 	@echo "Comparison:"
 	@echo "  cross-compare     - Run cross-implementation comparison"
