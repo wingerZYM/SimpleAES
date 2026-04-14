@@ -172,7 +172,11 @@ endif
 
 $(BINDIR)/test_waes: $(WAES_SRC) $(COMMON_DEPS) ../WAes.hpp
 	@mkdir -p $(BINDIR)
+ifeq ($(ARM_CRYPTO_SUPPORT),yes)
+	$(CXX) $(CXXFLAGS) -march=armv8-a+crypto $(INCLUDES) -o $@ $(WAES_SRC)
+else
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(WAES_SRC)
+endif
 
 # Build comparison tool
 compare: $(BINDIR)/compare-implementations
