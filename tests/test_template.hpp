@@ -270,29 +270,27 @@ TestResult testAESImplementation(const uint8_t* key, size_t keyLen, size_t dataS
     
     // Encrypt
     timer.start();
-    size_t cipherLen = aes.Cipher(testData.data(), dataSize, ciphertext.data(), ciphertext.size());
-    double encryptTime = timer.elapsed();
-    
-    if (cipherLen == 0) {
+    size_t cipherLen = ciphertext.size();
+    if (!aes.Cipher(testData.data(), dataSize, ciphertext.data(), cipherLen)) {
         return TestResult(false, "Encryption failed");
     }
-    
+    double encryptTime = timer.elapsed();
+
     ciphertext.resize(cipherLen);
-    
+
     // Decrypt
     timer.start();
-    size_t decryptedLen = aes.InvCipher(ciphertext.data(), cipherLen, decrypted.data(), decrypted.size());
-    double decryptTime = timer.elapsed();
-    
-    if (decryptedLen == 0) {
+    size_t decryptedLen = decrypted.size();
+    if (!aes.InvCipher(ciphertext.data(), cipherLen, decrypted.data(), decryptedLen)) {
         return TestResult(false, "Decryption failed");
     }
-    
+    double decryptTime = timer.elapsed();
+
     if (decryptedLen != dataSize) {
-        return TestResult(false, "Decrypted length mismatch: expected " + 
+        return TestResult(false, "Decrypted length mismatch: expected " +
                          std::to_string(dataSize) + ", got " + std::to_string(decryptedLen));
     }
-    
+
     decrypted.resize(decryptedLen);
     
     // Verify data integrity
@@ -339,23 +337,23 @@ TestResult testPaddingValidation(const uint8_t* key, size_t keyLen,
     // Encrypt
     size_t maxCipherLen = aes.SumCipherLength(testData.size());
     std::vector<uint8_t> ciphertext(maxCipherLen);
-    size_t cipherLen = aes.Cipher(testData.data(), testData.size(), ciphertext.data(), ciphertext.size());
-    
-    if (cipherLen == 0) {
+    size_t cipherLen = ciphertext.size();
+    if (!aes.Cipher(testData.data(), testData.size(), ciphertext.data(), cipherLen)) {
         return TestResult(false, "Encryption failed");
     }
-    
+
     ciphertext.resize(cipherLen);
-    
+
     // Test with corrupted padding (only for PKCS7)
     if (padding == Padding::PKCS7) {
         auto corruptedCiphertext = corruptPadding(ciphertext);
         std::vector<uint8_t> decrypted(testData.size());
-        
-        size_t decryptedLen = aes.InvCipher(corruptedCiphertext.data(), corruptedCiphertext.size(), 
-                                          decrypted.data(), decrypted.size());
-        
-        if (decryptedLen != 0) {
+
+        size_t decryptedLen = decrypted.size();
+        bool decOk = aes.InvCipher(corruptedCiphertext.data(), corruptedCiphertext.size(),
+                                   decrypted.data(), decryptedLen);
+
+        if (decOk) {
             return TestResult(false, "Should have failed with corrupted padding");
         }
     }
@@ -388,21 +386,25 @@ TestResult benchmarkImplementation(const uint8_t* key, size_t keyLen, size_t dat
     
     // Warm up
     for (int i = 0; i < 10; i++) {
-        aes.Cipher(testData.data(), dataSize, ciphertext.data(), ciphertext.size());
-        aes.InvCipher(ciphertext.data(), maxCipherLen, decrypted.data(), decrypted.size());
+        size_t tmpLen = ciphertext.size();
+        aes.Cipher(testData.data(), dataSize, ciphertext.data(), tmpLen);
+        tmpLen = decrypted.size();
+        aes.InvCipher(ciphertext.data(), maxCipherLen, decrypted.data(), tmpLen);
     }
-    
+
     // Benchmark encryption
     timer.start();
     for (int i = 0; i < iterations; i++) {
-        aes.Cipher(testData.data(), dataSize, ciphertext.data(), ciphertext.size());
+        size_t tmpLen = ciphertext.size();
+        aes.Cipher(testData.data(), dataSize, ciphertext.data(), tmpLen);
     }
     double encryptTime = timer.elapsed() / iterations;
-    
+
     // Benchmark decryption
     timer.start();
     for (int i = 0; i < iterations; i++) {
-        aes.InvCipher(ciphertext.data(), maxCipherLen, decrypted.data(), decrypted.size());
+        size_t tmpLen = decrypted.size();
+        aes.InvCipher(ciphertext.data(), maxCipherLen, decrypted.data(), tmpLen);
     }
     double decryptTime = timer.elapsed() / iterations;
     
@@ -531,22 +533,26 @@ TestResult benchmarkLargeData(const uint8_t* key, size_t keyLen, size_t dataSize
     
     // Warm up with smaller iterations for large data
     for (int i = 0; i < 3; i++) {
-        size_t cipherLen = aes.Cipher(testData.data(), dataSize, ciphertext.data(), ciphertext.size());
-        aes.InvCipher(ciphertext.data(), cipherLen, decrypted.data(), decrypted.size());
+        size_t cipherLen = ciphertext.size();
+        aes.Cipher(testData.data(), dataSize, ciphertext.data(), cipherLen);
+        size_t decLen = decrypted.size();
+        aes.InvCipher(ciphertext.data(), cipherLen, decrypted.data(), decLen);
     }
-    
+
     // Benchmark encryption
     timer.start();
-    size_t finalCipherLen = 0;
+    size_t finalCipherLen = ciphertext.size();
     for (int i = 0; i < iterations; i++) {
-        finalCipherLen = aes.Cipher(testData.data(), dataSize, ciphertext.data(), ciphertext.size());
+        finalCipherLen = ciphertext.size();
+        aes.Cipher(testData.data(), dataSize, ciphertext.data(), finalCipherLen);
     }
     double encryptTime = timer.elapsed() / iterations;
-    
+
     // Benchmark decryption
     timer.start();
     for (int i = 0; i < iterations; i++) {
-        aes.InvCipher(ciphertext.data(), finalCipherLen, decrypted.data(), decrypted.size());
+        size_t tmpLen = decrypted.size();
+        aes.InvCipher(ciphertext.data(), finalCipherLen, decrypted.data(), tmpLen);
     }
     double decryptTime = timer.elapsed() / iterations;
     

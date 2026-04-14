@@ -428,7 +428,8 @@ public:
             {"AES-NI", "run-aes-ni"},
             {"VAES", "run-vaes"},
             {"VAES512", "run-vaes512"},
-            {"ARMv8", "run-armv8"}
+            {"ARMv8", "run-armv8"},
+            {"WAes", "run-waes"}
         };
 
         if (cmd_map.find(impl_name) == cmd_map.end()) {
@@ -503,6 +504,11 @@ public:
         // Generic implementation is always available
         if (file_exists("../WAes-gen.hpp")) {
             available.push_back("Generic");
+        }
+
+        // Unified multi-backend implementation is always available
+        if (file_exists("../WAes.hpp")) {
+            available.push_back("WAes");
         }
 
         // x86-64 specific implementations
@@ -725,7 +731,7 @@ void print_help() {
 Usage: compare_implementations [OPTIONS] [IMPLEMENTATIONS...]
 
 Arguments:
-  IMPLEMENTATIONS    AES implementations to compare (Generic, AES-NI, VAES, VAES512, ARMv8)
+  IMPLEMENTATIONS    AES implementations to compare (Generic, AES-NI, VAES, VAES512, ARMv8, WAes)
                     If not specified, auto-detect available implementations
 
 Options:
@@ -777,7 +783,7 @@ int main(int argc, char* argv[]) {
     // Handle clean-only mode
     if (clean_only) {
         std::cout << "Cleaning up mode - removing old test result files...\n";
-        std::vector<std::string> all_possible = {"Generic", "AES-NI", "VAES", "VAES512", "ARMv8"};
+        std::vector<std::string> all_possible = {"Generic", "AES-NI", "VAES", "VAES512", "ARMv8", "WAes"};
         tool.cleanup_test_files(all_possible);
         std::cout << "Cleanup completed.\n";
         return 0;

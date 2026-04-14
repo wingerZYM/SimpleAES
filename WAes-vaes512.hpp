@@ -202,7 +202,7 @@ public:
         memcpy(&m_iv, counter, length > 16 ? 16 : length);
     }
 
-    size_t Cipher(const void* in, size_t inLength, void* out, size_t outLength) const
+    bool Cipher(const void* in, size_t inLength, void* out, size_t& outLength) const
     {
         switch (m_mode)
         {
@@ -213,10 +213,10 @@ public:
         case Mode::CTR:
             return cipherCTR(in, inLength, out, outLength);
         }
-        return 0;
+        return false;
     }
 
-    size_t InvCipher(const void* in, size_t inLength, void* out, size_t outLength) const
+    bool InvCipher(const void* in, size_t inLength, void* out, size_t& outLength) const
     {
         switch (m_mode)
         {
@@ -227,7 +227,7 @@ public:
         case Mode::CTR:
             return cipherCTR(in, inLength, out, outLength); // CTR mode uses same operation for both
         }
-        return 0;
+        return false;
     }
 
 private:
@@ -312,12 +312,12 @@ private:
         return true;
     }
 
-    size_t cipherECB(const void* in, size_t inLength, void* out, size_t outLength) const
+    bool cipherECB(const void* in, size_t inLength, void* out, size_t& outLength) const
     {
         auto nNeedLen = SumCipherLength(inLength);
         if (outLength < nNeedLen)
         {
-            return 0;
+            return false;
         }
 
 		auto len = inLength;
@@ -351,15 +351,16 @@ private:
             _mm_storeu_si128(output128, state);
 		}
 
-        return nNeedLen;
+        outLength = nNeedLen;
+        return true;
     }
 
-    size_t cipherCBC(const void* in, size_t inLength, void* out, size_t outLength) const
+    bool cipherCBC(const void* in, size_t inLength, void* out, size_t& outLength) const
     {
         auto nNeedLen = SumCipherLength(inLength);
         if (outLength < nNeedLen)
         {
-            return 0;
+            return false;
         }
 
         auto len = inLength;
@@ -393,14 +394,15 @@ private:
             _mm_storeu_si128(output, state);
         }
 
-        return nNeedLen;
+        outLength = nNeedLen;
+        return true;
     }
 
-    size_t cipherCTR(const void* in, size_t inLength, void* out, size_t outLength) const
+    bool cipherCTR(const void* in, size_t inLength, void* out, size_t& outLength) const
     {
         if (outLength < inLength)
         {
-            return 0;
+            return false;
         }
 
         static const auto bswap_epi64 = _mm512_broadcast_i32x4(_mm_setr_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8));
@@ -429,14 +431,15 @@ private:
             }
         }
 
-        return inLength;
+        outLength = inLength;
+        return true;
     }
 
-    size_t invCipherECB(const void* in, size_t inLength, void* out, size_t outLength) const
+    bool invCipherECB(const void* in, size_t inLength, void* out, size_t& outLength) const
     {
         if (!inLength || inLength % 16)// invalid data length
         {
-            return 0;
+            return false;
         }
 
         auto block = static_cast<int64_t>(inLength / 16) - 1;
@@ -457,7 +460,7 @@ private:
         {
             if (!isValidPKCS7Padding(state128))
             {
-                return 0;
+                return false;
             }
             padLen = reinterpret_cast<uint8_t*>(&state128)[15];
         }
@@ -465,7 +468,7 @@ private:
         if (outLength < inLength - padLen)
         {
             // out buffer too small
-            return 0;
+            return false;
         }
 
         outLength = inLength - padLen;
@@ -491,14 +494,14 @@ private:
 			_mm_storeu_si128(output128, state128);
         }
 
-        return outLength;
+        return true;
     }
 
-    size_t invCipherCBC(const void* in, size_t inLength, void* out, size_t outLength) const
+    bool invCipherCBC(const void* in, size_t inLength, void* out, size_t& outLength) const
     {
         if (!inLength || inLength % 16)// invalid data length
         {
-            return 0;
+            return false;
         }
 
         auto block = static_cast<int64_t>(inLength / 16) - 1;
@@ -531,7 +534,7 @@ private:
         {
             if (!isValidPKCS7Padding(state128))
             {
-                return 0;
+                return false;
             }
             padLen = reinterpret_cast<uint8_t*>(&state128)[15];
         }
@@ -539,7 +542,7 @@ private:
         if (outLength < inLength - padLen)
         {
             // out buffer too small
-            return 0;
+            return false;
         }
 
         outLength = inLength - padLen;
@@ -588,7 +591,7 @@ private:
             _mm_storeu_si128(output128, _mm_xor_si128(state128, iv));
 		}
 
-        return outLength;
+        return true;
     }
 }; 
 

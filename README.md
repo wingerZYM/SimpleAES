@@ -14,30 +14,54 @@ In any C++11-compatible environment, all you need is a single `hpp` header file:
 
 Yes, just include this header in your source file and you're ready to perform AES encryption and decryption. As long as the compiler supports C++11, there are no other dependencies. It can even be integrated into Objective-C++ `.mm` files, and it won't introduce any new runtime dependencies to your final application.
 
-## Implementation Versions
+## Two ways to use
 
-The library now provides multiple optimized versions of AES implementation:
+The library offers two approaches -- **standalone single-backend headers** and a **unified adaptive header** -- to cover different deployment scenarios.
 
-### 📦 Generic Version
-- **`WAes-gen.hpp`** - Pure C++ implementation, compatible with all platforms and compilers supporting C++11+
+### Standalone Headers (Single Backend)
 
-### ⚡ Hardware-Accelerated Versions
+Each `WAes-*.hpp` is a complete, self-contained AES implementation targeting a specific instruction set. Include one header, get one backend -- no abstraction overhead, no runtime dispatch.
 
-#### x86/x64 Architecture
-- **`WAes-ni.hpp`** - Hardware-accelerated version based on Intel AES-NI instruction set
-- **`WAes-vaes.hpp`** - Advanced hardware-accelerated version based on Intel VAES (AVX2) instruction set
-- **`WAes-vaes512.hpp`** - Ultra-high performance version based on Intel VAES (AVX512) instruction set
+| Header | Backend | Required Flags |
+|--------|---------|----------------|
+| `WAes-gen.hpp` | Pure C++ (Generic) | None (C++11) |
+| `WAes-ni.hpp` | Intel AES-NI | `-mssse3 -maes` |
+| `WAes-vaes.hpp` | Intel VAES (AVX2) | `-mavx2 -mvaes` |
+| `WAes-vaes512.hpp` | Intel VAES (AVX512) | `-mavx512f -mvaes` |
+| `WAes-armv8.hpp` | ARMv8-A Crypto | `-march=armv8-a+crypto` |
 
-#### ARM Architecture  
-- **`WAes-armv8.hpp`** - ARM64 accelerated version based on ARMv8-A AES hardware instructions
+**Best for**: Server-side programs and embedded systems where the target platform is known at build time. You pick the fastest backend your hardware supports and compile directly against it -- zero indirection, maximum performance.
 
-### 🚀 Performance Comparison
-Performance ranking from lowest to highest:
+### Unified Adaptive Header (`WAes.hpp`)
+
+`WAes.hpp` bundles all backends into one file and automatically selects the best available implementation based on compile-time platform detection. It exposes a polymorphic `WAes::Ptr` interface with a factory function:
+
+```c++
+#include "WAes.hpp"
+
+// Auto-select the best backend
+auto aes = WAes::Create<128>(key, keyLen, iv, ivLen);
+aes->Cipher(plaintext, plainLen, ciphertext, cipherLen);
+```
+
+You can also explicitly request a specific backend at runtime:
+
+```c++
+auto aes = WAes::Create<256>(WAes::Backend::Generic, key, keyLen);
+```
+
+Performance testing shows that the unified version performs on par with the standalone headers -- the virtual dispatch overhead is negligible compared to AES computation itself.
+
+**Best for**: Client-side applications and libraries that need to be distributed across diverse hardware. One binary adapts to x86, ARM, or fallback-generic without the user having to choose.
+
+### Performance Ranking
+
+From lowest to highest throughput:
 ```
 Generic < AES-NI < VAES (AVX2) < VAES512 (AVX512)
 ```
 
-All versions share the exact same public interface, so switching between implementations is as simple as changing the included header file.
+All standalone headers share the same public `CWAes<N>` interface. The unified `WAes.hpp` exposes the same operations through `WAes::Ptr`, plus additional convenience APIs.
 
 ## What can it do despite being so simple?
 
@@ -96,55 +120,105 @@ ctr.SetCounter(iv, 16); // Set counter and switch to CTR mode.
 Encryption:
 
 ```c++
-CWAes aes(...);
-auto outLen = aes.Cipher(data, 16, ciphertext, sizeof(ciphertext));
+CWAes128 aes(key, 16);
+size_t cipherLen = sizeof(ciphertext);
+if (!aes.Cipher(data, 16, ciphertext, cipherLen)) {
+    // encryption failed (buffer too small, etc.)
+}
+// cipherLen now holds the actual bytes written
 ```
 
 Decryption:
 
 ```c++
-CWAes aes(...);
-auto outLen = aes.InvCipher(ciphertext, 32, plaintext, sizeof(plaintext));
+CWAes128 aes(key, 16);
+size_t plainLen = sizeof(plaintext);
+if (!aes.InvCipher(ciphertext, cipherLen, plaintext, plainLen)) {
+    // decryption failed (bad padding, etc.)
+}
+// plainLen now holds the actual bytes written (padding removed)
 ```
+
+Both `Cipher` and `InvCipher` return `bool` -- `true` on success, `false` on failure. The `outLength` parameter is passed by reference: on input it gives the buffer capacity; on success it is updated to the actual number of bytes written.
+
+`SumCipherLength(inLen)` returns the required output buffer size for `Cipher`.
 
 The encryption mode and padding method are determined when constructing the AES object. You can later switch modes using `SetIV` or `SetCounter`. The encryption and decryption interfaces are the same across all modes.
 
-## Hardware-Accelerated Versions Detailed
+## Using the Unified Header (`WAes.hpp`)
 
-### Intel AES-NI Version
-`WAes-ni.hpp` is based on Intel AES-NI instruction set, providing approximately 4x performance improvement over the generic version.
+`WAes.hpp` provides the same operations through a polymorphic interface with extra convenience features:
 
-**Compilation Requirements**:
-```shell
-c++ -std=c++11 -mssse3 -maes test.cpp
+```c++
+#include "WAes.hpp"
+
+// Auto-select best backend
+auto aes = WAes::Create<128>(key, 16, iv, 16);
+
+// Encrypt
+size_t cipherLen = aes->SumCipherLength(dataSize);
+std::vector<uint8_t> ct(cipherLen);
+aes->Cipher(data, dataSize, ct.data(), cipherLen);
+
+// Decrypt
+size_t plainLen = dataSize;
+std::vector<uint8_t> pt(plainLen);
+aes->InvCipher(ct.data(), ct.size(), pt.data(), plainLen);
 ```
 
-### Intel VAES Version  
-`WAes-vaes.hpp` is based on AVX2 + VAES instruction set, capable of processing 2 AES blocks in parallel for higher performance.
+Container overloads (returns `std::vector` directly):
 
-**Compilation Requirements**:
-```shell
-c++ -std=c++11 -mavx2 -mvaes test.cpp
+```c++
+auto ct = aes->Cipher(plainVec);          // encrypt vector → vector
+std::vector<uint8_t> pt;
+aes->InvCipher(ct, pt);                   // decrypt vector → vector
 ```
 
-### Intel VAES512 Version
-`WAes-vaes512.hpp` is based on AVX512 + VAES instruction set, capable of processing 4 AES blocks in parallel for ultimate performance.
+Explicit backend selection:
 
-**Compilation Requirements**:
-```shell
-c++ -std=c++11 -mavx512f -mvaes test.cpp
+```c++
+// List what's available on this machine
+for (auto b : WAes::AvailableBackends())
+    std::cout << WAes::GetImplName(b) << "\n";
+
+// Force a specific backend
+auto aes = WAes::Create<256>(WAes::Backend::Generic, key, 32);
 ```
 
-### ARMv8 Version
-`WAes-armv8.hpp` is based on ARMv8-A AES hardware instructions, suitable for ARM64 platforms.
+RAII scope IV (restores original IV/mode on scope exit):
 
-**Compilation Requirements**:
+```c++
+{
+    auto scope = aes->ScopeIV(tempIV, 16);
+    aes->Cipher(...);   // uses tempIV
+}
+// back to original IV
+```
+
+## Compilation Requirements
+
+### Standalone Headers
+
+| Header | Required Flags |
+|--------|---------------|
+| `WAes-gen.hpp` | None (C++11) |
+| `WAes-ni.hpp` | `-mssse3 -maes` |
+| `WAes-vaes.hpp` | `-mavx2 -mvaes` |
+| `WAes-vaes512.hpp` | `-mavx512f -mvaes` |
+| `WAes-armv8.hpp` | `-march=armv8-a+crypto` (Linux/macOS ARM64) |
+
+All variants require at least `-std=c++11`; `-std=c++17 -O3` is recommended.
+
+### Unified Header (`WAes.hpp`)
+
+`WAes.hpp` detects the target platform via preprocessor macros and enables all backends that the compile flags allow. Use `-march=native` to let the compiler enable everything the host CPU supports:
+
 ```shell
-# Linux ARM64
-c++ -std=c++11 -march=armv8-a+crypto test.cpp
+# x86: enables Generic + AES-NI + VAES/VAES512 as supported
+c++ -std=c++17 -O3 -march=native WAes_example.cpp
 
-# macOS ARM64 (no additional flags needed)
-c++ -std=c++11 test.cpp
+# ARM64 Linux
+c++ -std=c++17 -O3 -march=armv8-a+crypto WAes_example.cpp
 ```
 
 ## 🧪 Test Framework (`tests/` Directory)
@@ -164,6 +238,7 @@ To ensure consistency and correctness across different implementations, the proj
 - **`test_vaes.cpp`** - VAES (AVX2) implementation tests
 - **`test_vaes512.cpp`** - VAES512 (AVX512) implementation tests
 - **`test_armv8.cpp`** - ARMv8 implementation tests
+- **`test_waes.cpp`** - Unified adaptive version tests (iterates all available backends, plus cross-backend consistency validation)
 
 #### Cross-Implementation Comparison Tools
 - **`compare_implementations.cpp`** - Cross-implementation comparison tool
@@ -296,13 +371,16 @@ Success rate: 100.0%
 | VAES512 | Intel Skylake-X (2017+)<br>Intel Ice Lake (2019+) | Specialized high-performance computing |
 | ARMv8 | ARMv8-A with Crypto extensions | ARM64 servers/mobile devices |
 
-### Version Selection Guidelines
+### Which header should I use?
 
-1. **Development/Testing**: Use `Generic` version for maximum compatibility
-2. **Modern x86 Servers**: Prefer `VAES` version
-3. **High-Performance Computing**: Use `VAES512` version on supported platforms
-4. **ARM64 Devices**: Use `ARMv8` version
-5. **Cross-Platform Deployment**: Runtime detection and selection of appropriate version
+| Scenario | Recommendation |
+|----------|----------------|
+| Server / embedded, known platform | Standalone header matching your CPU (e.g. `WAes-vaes.hpp`) |
+| Distributed client, unknown hardware | `WAes.hpp` -- auto-selects best backend per machine |
+| Development / CI | `WAes-gen.hpp` or `WAes.hpp` |
+| ARM64 (mobile, Apple Silicon, Pi) | `WAes-armv8.hpp` or `WAes.hpp` |
+
+The guiding principle: if you know the platform at build time, the standalone header gives you the most direct path -- no virtual dispatch, no abstraction layer. If the binary needs to run on diverse hardware, `WAes.hpp` delivers the same throughput while handling backend selection automatically.
 
 ## Are there any known limitations?
 
