@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <span>
 #include <vector>
 
 #if defined(WAES_ARMV8)
@@ -114,6 +115,8 @@ class Aes {
   Mode m_mode;
 
   Aes(Padding padding) : m_padding(padding), m_mode(Mode::ECB) {}
+  Aes(const Aes&) = default;
+  Aes& operator=(const Aes&) = default;
 
   bool isValidPKCS7Padding(const void* state) const {
     auto pos = reinterpret_cast<const uint8_t*>(state);
@@ -164,7 +167,7 @@ class Aes {
     Mode m_mode;
 
    public:
-    tempIVScope(Aes* aes, const void* iv, size_t length, bool is_ctr = false)
+    tempIVScope(Aes* aes, const void* iv, size_t length, bool is_ctr)
         : m_pAes(aes) {
       m_pAes->getIVImpl(m_iv);
       m_mode = m_pAes->m_mode;
@@ -194,8 +197,16 @@ class Aes {
     return tempIVScope(this, iv, length, false);
   }
 
+  auto ScopeIV(std::span<const uint8_t, 16> iv) {
+    return tempIVScope(this, iv.data(), iv.size(), false);
+  }
+
   auto ScopeCounter(const void* counter, size_t length) {
     return tempIVScope(this, counter, length, true);
+  }
+
+  auto ScopeCounter(std::span<const uint8_t, 16> counter) {
+    return tempIVScope(this, counter.data(), counter.size(), true);
   }
 
   template <typename Func>
@@ -206,10 +217,22 @@ class Aes {
   }
 
   template <typename Func>
+  auto WithScopeIV(std::span<const uint8_t, 16> iv, Func&& func)
+      -> decltype(func()) {
+    return WithScopeIV(iv.data(), iv.size(), std::forward<Func>(func));
+  }
+
+  template <typename Func>
   auto WithScopeCounter(const void* counter, size_t length, Func&& func)
       -> decltype(func()) {
     tempIVScope scope(this, counter, length, true);
     return func();
+  }
+
+  template <typename Func>
+  auto WithScopeCounter(std::span<const uint8_t, 16> counter, Func&& func)
+      -> decltype(func()) {
+    return WithScopeCounter(counter.data(), counter.size(), std::forward<Func>(func));
   }
 
   size_t SumCipherLength(size_t nInLen) const {
@@ -231,11 +254,19 @@ class Aes {
     setIVImpl(iv, length);
   }
 
+  void SetIV(std::span<const uint8_t, 16> iv) {
+    SetIV(iv.data(), iv.size());
+  }
+
   // Sets the counter value when in CTR mode.
   // The maximum length is 16 byte, if not enough padding zero.
   void SetCounter(const void* counter, size_t length) {
     m_mode = Mode::CTR;
     setIVImpl(counter, length);
+  }
+
+  void SetCounter(std::span<const uint8_t, 16> counter) {
+    SetCounter(counter.data(), counter.size());
   }
 
   // Set CTR mode for FIPS compliance.
@@ -298,6 +329,10 @@ class Aes {
     out.resize(outLength);
     return true;
   }
+
+  void SetPadding(Padding padding) { m_padding = padding; }
+
+  virtual Ptr Clone() const = 0;
 };
 
 #if defined(WAES_ARMV8)
@@ -735,6 +770,8 @@ class WAesArmV8 final : public Aes {
   }
 
   virtual void getIVImpl(void* iv) const override { memcpy(iv, &m_iv, 16); }
+
+  virtual Ptr Clone() const override { return Ptr(new WAesArmV8<N>(*this)); }
 
   template <int>
   friend Ptr WAes::Create(const void*, size_t, const void*, size_t, Padding);
@@ -1212,6 +1249,8 @@ class WAesNi : public Aes {
 
   virtual void getIVImpl(void* iv) const override { memcpy(iv, &m_iv, 16); }
 
+  virtual Ptr Clone() const override { return Ptr(new WAesNi<N>(*this)); }
+
   template <int>
   friend Ptr WAes::Create(const void*, size_t, const void*, size_t, Padding);
   template <int>
@@ -1396,6 +1435,8 @@ class WAesV final : public WAesNi<N> {
 
     return true;
   }
+
+  virtual Ptr Clone() const override { return Ptr(new WAesV<N>(*this)); }
 
   template <int>
   friend Ptr WAes::Create(const void*, size_t, const void*, size_t, Padding);
@@ -1596,6 +1637,8 @@ class WAesV512 final : public WAesNi<N> {
 
     return true;
   }
+
+  virtual Ptr Clone() const override { return Ptr(new WAesV512<N>(*this)); }
 
   template <int>
   friend Ptr WAes::Create(const void*, size_t, const void*, size_t, Padding);
@@ -2371,6 +2414,8 @@ class WAesGen final : public Aes {
   }
 
   virtual void getIVImpl(void* iv) const override { memcpy(iv, m_iv, 16); }
+
+  virtual Ptr Clone() const override { return Ptr(new WAesGen<N>(*this)); }
 
   template <int>
   friend Ptr WAes::Create(const void*, size_t, const void*, size_t, Padding);

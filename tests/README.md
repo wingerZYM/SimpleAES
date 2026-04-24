@@ -335,7 +335,7 @@ If you see support not detected messages, it means:
 
 ### Compilation Errors
 Ensure:
-- Using a C++17 compatible compiler
+- Using a C++20 compatible compiler (required by `WAes.hpp`; C++17 suffices for standalone headers)
 - Compiler supports target instruction sets
 - Correctly set `-march=native` flag
 

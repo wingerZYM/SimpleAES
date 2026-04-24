@@ -186,18 +186,18 @@ RAII 作用域 IV（离开作用域后自动恢复原始 IV/模式）：
 | `WAes-vaes512.hpp` | `-mavx512f -mvaes` |
 | `WAes-armv8.hpp` | `-march=armv8-a+crypto`（Linux/macOS ARM64） |
 
-所有变体最低要求 `-std=c++11`，推荐使用 `-std=c++17 -O3`。
+所有独立变体最低要求 `-std=c++11`，推荐使用 `-std=c++17 -O3`。
 
 ### 统一头文件（`WAes.hpp`）
 
-`WAes.hpp` 通过预处理宏检测目标平台，自动启用编译参数所允许的所有后端。使用 `-march=native` 让编译器自动启用当前主机 CPU 支持的全部指令集：
+`WAes.hpp` 要求 **C++20**（使用了 `std::span`）。通过预处理宏检测目标平台，自动启用编译参数所允许的所有后端。使用 `-march=native` 让编译器自动启用当前主机 CPU 支持的全部指令集：
 
 ```shell
 # x86：自动启用 Generic + AES-NI + VAES/VAES512
-c++ -std=c++17 -O3 -march=native WAes_example.cpp
+c++ -std=c++20 -O3 -march=native WAes_example.cpp
 
 # ARM64 Linux
-c++ -std=c++17 -O3 -march=armv8-a+crypto WAes_example.cpp
+c++ -std=c++20 -O3 -march=armv8-a+crypto WAes_example.cpp
 ```
 
 ## 🧪 测试框架 (`tests/` 目录)

@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -O3 -march=native -Wall -Wextra
+CXXFLAGS = -std=c++20 -O3 -march=native -Wall -Wextra
 INCLUDES = -I..
 
 # Output directories

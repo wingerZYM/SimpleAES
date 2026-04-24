@@ -207,18 +207,18 @@ RAII scope IV (restores original IV/mode on scope exit):
 | `WAes-vaes512.hpp` | `-mavx512f -mvaes` |
 | `WAes-armv8.hpp` | `-march=armv8-a+crypto` (Linux/macOS ARM64) |
 
-All variants require at least `-std=c++11`; `-std=c++17 -O3` is recommended.
+All standalone variants require at least `-std=c++11`; `-std=c++17 -O3` is recommended.
 
 ### Unified Header (`WAes.hpp`)
 
-`WAes.hpp` detects the target platform via preprocessor macros and enables all backends that the compile flags allow. Use `-march=native` to let the compiler enable everything the host CPU supports:
+`WAes.hpp` requires **C++20** (uses `std::span`). It detects the target platform via preprocessor macros and enables all backends that the compile flags allow. Use `-march=native` to let the compiler enable everything the host CPU supports:
 
 ```shell
 # x86: enables Generic + AES-NI + VAES/VAES512 as supported
-c++ -std=c++17 -O3 -march=native WAes_example.cpp
+c++ -std=c++20 -O3 -march=native WAes_example.cpp
 
 # ARM64 Linux
-c++ -std=c++17 -O3 -march=armv8-a+crypto WAes_example.cpp
+c++ -std=c++20 -O3 -march=armv8-a+crypto WAes_example.cpp
 ```
 
 ## 🧪 Test Framework (`tests/` Directory)
