@@ -6,7 +6,7 @@
 ```c++
 #include "WAes-gen.hpp"
 ```
-是的，只需要在源文件中包含一个头文件，就可以对数据进行AES加解密操作了。只要编译器支持C++11，就没有别的要求。甚至可以集成到oc++的.mm文件中。并且不会让最终发布的程序产生任何新的依赖。
+是的，只需要在源文件中包含一个头文件，就可以对数据进行AES加解密操作了。只要编译器支持C++11，就没有别的要求。甚至可以集成到 Objective-C++ 的 `.mm` 文件中，并且不会让最终发布的程序产生任何新的运行时依赖。
 
 ## 两种使用方式
 
@@ -44,16 +44,21 @@ aes->Cipher(plaintext, plainLen, ciphertext, cipherLen);
 auto aes = WAes::Create<256>(WAes::Backend::Generic, key, keyLen);
 ```
 
-性能测试表明，统一版本与独立头文件性能相当——虚函数调用开销相对于 AES 计算本身可以忽略不计。
+在批量操作中，统一版本的性能通常接近其选中的独立后端；实际差异取决于消息长度、工作模式、编译器和 CPU。
 
 **适合场景**：希望统一 API，并在当前构建包含的后端之间自动选择的程序或库。将 GCC/Clang 构建作为可跨代 CPU 分发的 x86 fat binary 前，请先阅读下方编译说明。
 
-### 性能对比
+### 性能预期
 
-从低到高排序：
-```
+对于长度足够大、可以并行处理的 ECB、CTR 和 CBC 解密路径，通常有以下趋势：
+
+```text
 Generic < AES-NI < VAES (AVX2) < VAES512 (AVX512)
 ```
+
+这不是在所有情况下都成立的固定排序。小数据、CBC 加密、编译器生成的代码、
+CPU 频率策略以及宽向量状态的开销都可能改变结果。应使用应用实际采用的模式和
+消息长度进行测试。
 
 所有独立头文件共享相同的 `CWAes<N>` 公开接口。统一版 `WAes.hpp` 通过 `WAes::Ptr` 提供相同操作，并附加了额外的便捷 API。
 
@@ -214,47 +219,46 @@ GCC 和 Clang 的指令集参数作用于整个翻译单元。使用 `-march=nat
 
 在 AArch64 上，统一头文件只有检测到 `__ARM_FEATURE_CRYPTO` 时才启用 ARM Crypto 后端。若工具链不提供该宏，可以定义 `WAES_ASSUME_ARM_CRYPTO`，但前提是部署硬件确定具备 Crypto Extension。
 
+## 安全注意事项
+
+SimpleAES 提供 AES 原语和传统的保密模式，并不是完整的认证加密协议。
+
+- ECB 会暴露重复数据块的模式，通常不适合一般应用数据。
+- CBC 和 CTR 不验证密文完整性。需要配合设计正确的 MAC，或者优先使用认证加密方案。
+- CBC 的 IV 必须不可预测；同一个密钥下绝不能重复使用 CTR 的 counter/nonce。
+- Generic 后端为了性能使用与密钥相关的 T-table 查表，缓存访问不是常量时间。
+  存在本地计时或缓存侧信道威胁时，应使用硬件后端。
+- Zero padding 无法区分填充零与明文本身的尾部零。PKCS7 解密失败也不应以可能形成
+  padding oracle 的方式暴露给外部。
+
 ## 🧪 测试框架 (`tests/` 目录)
 
-为了确保不同实现之间的一致性和正确性，项目提供了完整的测试框架：
+测试套件会验证每个独立实现以及统一自适应头文件。完整命令说明请参阅
+[`tests/README_CN.md`](tests/README_CN.md)。
 
 ### 测试组件
 
-#### 核心测试文件
-- **`test_template.hpp`** - 通用测试模板，包含所有测试逻辑
-- **`test_data.hpp`** - 测试数据定义（密钥、IV、测试向量等）
-- **`test_utils.hpp`** - 测试工具函数（计时器、数据比较等）
-
-#### 实现测试文件
-- **`test_generic.cpp`** - 通用实现测试
-- **`test_aes_ni.cpp`** - AES-NI实现测试
-- **`test_vaes.cpp`** - VAES(AVX2)实现测试
-- **`test_vaes512.cpp`** - VAES512(AVX512)实现测试
-- **`test_armv8.cpp`** - ARMv8实现测试
-- **`test_waes.cpp`** - 统一自适应版本测试（遍历所有可用后端，并进行后端间交叉验证）
-
-#### 跨实现比较工具
-- **`compare_implementations.cpp`** - 跨实现对比工具
-- **`Makefile`** - 自动化构建和测试系统
+- **共享基础设施**：`test_data.hpp`、`test_utils.hpp`、`test_options.hpp`、
+  `test_known_answers.hpp`、`test_template.hpp` 和 `test_entry.hpp`
+- **独立实现测试**：`test_generic.cpp`、`test_generic_multitu_main.cpp`、
+  `test_generic_multitu.cpp`、`test_aes_ni.cpp`、`test_vaes.cpp`、
+  `test_vaes512.cpp` 和 `test_armv8.cpp`
+- **统一实现测试**：`test_waes.cpp`、`test_waes_adapter.hpp`、
+  `test_waes_cross.hpp` 和 `test_waes_regressions.hpp`
+- **跨进程比较**：`compare_implementations.cpp`
+- **构建与测试自动化**：`Makefile`
 
 ### 测试功能
 
-#### 📋 功能测试
-测试所有支持的配置组合：
-- **密钥长度**：128位、192位、256位
-- **加密模式**：ECB、CBC、CTR
-- **填充方式**：PKCS7、Zeros
-- **数据大小**：16、32、48、64、192、1024字节
-
-#### ⚡ 性能测试
-- 加密/解密吞吐量测试
-- 不同数据大小的性能对比
-- 各实现之间的性能基准测试
-
-#### 🔄 跨实现一致性验证
-- 自动检测可用的硬件实现
-- 验证所有实现产生相同的加密结果
-- 随机参数测试以增加测试覆盖率
+- **标准答案测试**：9 个 FIPS-197 和 NIST SP 800-38A 向量，覆盖
+  ECB、CBC、CTR 以及 128/192/256 位密钥
+- **确定性组合测试**：15 种模式/密钥/填充配置乘以 25 种边界和多块长度
+  （1～271 字节），共 375 次往返测试
+- **校验测试**：6 个非法 PKCS7 拒绝测试，因此每个独立后端共有 390 项功能检查
+- **统一实现验证**：在同一进程中直接比较所有已编入且当前可执行的后端，并覆盖
+  guard page、填充、原地操作、非对齐 I/O 和 CTR 计数器回归测试
+- **性能测试**：1、4、16、64 KiB，以及 100 MiB 持续吞吐测试；结果使用 MiB/s
+- **自定义确定性参数**：可通过 `--custom-params` 指定密钥、IV 和 counter
 
 ### 使用方法
 
@@ -271,6 +275,7 @@ make run-aes-ni      # AES-NI实现
 make run-vaes        # VAES实现
 make run-vaes512     # VAES512实现（如果支持）
 make run-armv8       # ARMv8实现（ARM64平台）
+make run-waes        # 统一自适应实现
 ```
 
 #### 运行性能测试
@@ -287,70 +292,26 @@ make compare
 # 自动检测并比较所有可用实现
 make cross-compare
 # 或直接运行：
-./compare-implementations
+./out/bin/compare-implementations
 
 # 手动指定要比较的实现
-make cmp-specific IMPLS='Generic AES-NI VAES VAES512'
+make cmp-specific IMPLS='Generic WAes AES-NI VAES VAES512'
 # 或直接运行：
-./compare-implementations Generic AES-NI VAES VAES512
+./out/bin/compare-implementations Generic WAes AES-NI VAES VAES512
 
 # 保留测试文件用于调试
-./compare-implementations --keep-files --verbose
+./out/bin/compare-implementations --keep-files --verbose
 ```
 
 #### 运行完整测试套件
 ```bash
 make run-all         # 运行所有可用实现的功能测试
 make cross-compare   # 运行跨实现比较
+make sanitize        # 使用 ASan/UBSan 测试 Generic 和基线 WAes
 ```
 
-### 测试输出示例
-
-```bash
-$ make check-platform
-Platform Detection:
-  OS: Linux
-  Architecture: x86_64
-  Detected Platform: x86_64
-  AES-NI Support: yes
-  VAES Support: yes
-  VAES512 Support: yes
-  Building: Generic, AES-NI, VAES, VAES512 tests
-
-$ ./compare-implementations
-AES Implementation Comparison Tool
-==================================================
-Auto-detected implementations: Generic, AES-NI, VAES, VAES512
-Comparing implementations: Generic, AES-NI, VAES, VAES512
-
-Running tests for Generic...
-  ✓ Generic tests completed successfully
-Running tests for AES-NI...
-  ✓ AES-NI tests completed successfully
-Running tests for VAES...
-  ✓ VAES tests completed successfully
-Running tests for VAES512...
-  ✓ VAES512 tests completed successfully
-
-============================================================
-Cross-Implementation Comparison Results
-============================================================
-[PASS] ECB_128_PKCS7_16
-[PASS] ECB_128_PKCS7_32
-...
-[PASS] CTR_256_NoPad_1024
-
-============================================================
-SUMMARY REPORT
-============================================================
-Implementations tested: Generic, AES-NI, VAES, VAES512
-Total tests: 54
-Passed: 54
-Failed: 0
-Success rate: 100.0%
-
-🎉 All tests PASSED! All implementations are equivalent.
-```
+`make cross-compare` 会自动检测 `Generic`、`WAes` 以及当前支持的硬件后端，
+并比较 375 条确定性组合记录。具体后端列表取决于平台和编译器。
 
 ## 兼容性说明
 
@@ -358,11 +319,11 @@ Success rate: 100.0%
 
 | 实现版本 | 最低硬件要求 | 推荐用途 |
 |---------|-------------|----------|
-| Generic | 任意CPU | 兼容性优先场景 |
-| AES-NI | Intel Westmere (2010+)<br>AMD Bulldozer (2011+) | 通用x86服务器 |
-| VAES | Intel Ice Lake (2019+)<br>AMD Zen 3 (2020+) | 现代高性能服务器 |
-| VAES512 | Intel Skylake-X (2017+)<br>Intel Ice Lake (2019+) | 专用高性能计算 |
-| ARMv8 | ARMv8-A with Crypto extensions | ARM64服务器/移动设备 |
+| Generic | 具备 C++11 编译器的任意目标 | 兼容性优先场景 |
+| AES-NI | 支持 SSSE3 和 AES 的 x86 | 通用 x86 系统 |
+| VAES | 支持 SSSE3、AES、AVX2 和 VAES 的 x86 | 现代 x86 上可并行的工作负载 |
+| VAES512 | 支持 SSSE3、AES、AVX2、VAES、AVX512F/BW/DQ/VL 的 x86 | 已确认具备全部所需特性的系统 |
+| ARMv8 | 具备 Crypto Extension 的 AArch64 | ARM64 服务器/移动设备 |
 
 ### 如何选择头文件？
 

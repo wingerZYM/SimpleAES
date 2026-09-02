@@ -16,7 +16,6 @@
 #include <iterator>
 #include <map>
 #include <memory>
-#include <random>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -418,7 +417,7 @@ public:
 
       report.close();
       std::cout << "\nDetailed report saved to: "
-                   "implementation_comparison_report.txt\n";
+                << filePath("implementation_comparison_report.txt") << '\n';
     }
   }
 
@@ -682,8 +681,7 @@ public:
         std::cout << "  - " << filePath("implementation_comparison_report.txt")
                   << "\n";
       }
-      std::cout << "\nUse 'make clean-results' or run with --clean-only to "
-                   "remove these files later.\n";
+      std::cout << "\nRun with --clean-only to remove these files later.\n";
     }
 
     // Cleanup files unless explicitly keeping them

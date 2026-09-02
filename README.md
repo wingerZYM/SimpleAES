@@ -50,16 +50,23 @@ You can also explicitly request a specific backend at runtime:
 auto aes = WAes::Create<256>(WAes::Backend::Generic, key, keyLen);
 ```
 
-Performance testing shows that the unified version performs on par with the standalone headers -- the virtual dispatch overhead is negligible compared to AES computation itself.
+For bulk operations, the unified version normally performs close to the selected standalone backend. The exact difference depends on message size, mode, compiler, and CPU.
 
 **Best for**: Applications that want one API and automatic selection among the backends present in a build. See the compilation notes below before treating a GCC/Clang build as a portable x86 fat binary.
 
-### Performance Ranking
+### Performance Expectations
 
-From lowest to highest throughput:
-```
+For sufficiently large inputs on parallelizable paths such as ECB, CTR, and
+CBC decryption, the usual trend is:
+
+```text
 Generic < AES-NI < VAES (AVX2) < VAES512 (AVX512)
 ```
+
+This is not a universal ordering. Small inputs, CBC encryption, compiler code
+generation, CPU frequency behavior, and the cost of wider vector states can
+change the result. Benchmark the exact mode and message sizes used by the
+application.
 
 All standalone headers share the same public `CWAes<N>` interface. The unified `WAes.hpp` exposes the same operations through `WAes::Ptr`, plus additional convenience APIs.
 
@@ -235,47 +242,58 @@ On GCC and Clang, instruction-set flags apply to the translation unit as a whole
 
 On AArch64, the unified header enables the ARM crypto backend only when `__ARM_FEATURE_CRYPTO` is defined. A toolchain that does not expose that macro may define `WAES_ASSUME_ARM_CRYPTO`, but only when deployment hardware is guaranteed to implement the extension.
 
+## Security Considerations
+
+SimpleAES provides AES primitives and traditional confidentiality modes; it is
+not a complete authenticated-encryption protocol.
+
+- ECB reveals repeated-block patterns and is generally unsuitable for ordinary
+  application data.
+- CBC and CTR do not authenticate ciphertext. Pair them with a correctly
+  designed MAC, or prefer an authenticated-encryption construction when one is
+  available.
+- CBC IVs must be unpredictable. A CTR counter/nonce must never be reused with
+  the same key.
+- The Generic backend uses key-dependent T-table lookups for speed and is not
+  constant-time with respect to cache access. Do not use it where local
+  timing/cache side-channel attacks are in scope; prefer a hardware backend.
+- Zero padding cannot distinguish padding bytes from genuine trailing zeroes.
+  PKCS7 decryption failures must not be exposed in a way that creates a padding
+  oracle.
+
 ## 🧪 Test Framework (`tests/` Directory)
 
-To ensure consistency and correctness across different implementations, the project provides a comprehensive test framework:
+The test suite checks every standalone implementation and the unified adaptive
+header. See [`tests/README.md`](tests/README.md) for the full command reference.
 
 ### Test Components
 
-#### Core Test Files
-- **`test_template.hpp`** - Generic test template containing all test logic
-- **`test_data.hpp`** - Test data definitions (keys, IVs, test vectors, etc.)
-- **`test_utils.hpp`** - Test utility functions (timers, data comparison, etc.)
-
-#### Implementation Test Files
-- **`test_generic.cpp`** - Generic implementation tests
-- **`test_aes_ni.cpp`** - AES-NI implementation tests
-- **`test_vaes.cpp`** - VAES (AVX2) implementation tests
-- **`test_vaes512.cpp`** - VAES512 (AVX512) implementation tests
-- **`test_armv8.cpp`** - ARMv8 implementation tests
-- **`test_waes.cpp`** - Unified adaptive version tests (iterates all available backends, plus cross-backend consistency validation)
-
-#### Cross-Implementation Comparison Tools
-- **`compare_implementations.cpp`** - Cross-implementation comparison tool
-- **`Makefile`** - Automated build and test system
+- **Shared infrastructure**: `test_data.hpp`, `test_utils.hpp`,
+  `test_options.hpp`, `test_known_answers.hpp`, `test_template.hpp`, and
+  `test_entry.hpp`
+- **Standalone tests**: `test_generic.cpp`, `test_generic_multitu_main.cpp`,
+  `test_generic_multitu.cpp`, `test_aes_ni.cpp`, `test_vaes.cpp`,
+  `test_vaes512.cpp`, and `test_armv8.cpp`
+- **Unified tests**: `test_waes.cpp`, `test_waes_adapter.hpp`,
+  `test_waes_cross.hpp`, and `test_waes_regressions.hpp`
+- **Cross-process comparison**: `compare_implementations.cpp`
+- **Build and test automation**: `Makefile`
 
 ### Test Features
 
-#### 📋 Functionality Tests
-Tests all supported configuration combinations:
-- **Key Lengths**: 128-bit, 192-bit, 256-bit
-- **Encryption Modes**: ECB, CBC, CTR
-- **Padding Methods**: PKCS7, Zeros
-- **Data Sizes**: 16, 32, 48, 64, 192, 1024 bytes
-
-#### ⚡ Performance Tests
-- Encryption/decryption throughput testing
-- Performance comparison across different data sizes
-- Benchmarking between different implementations
-
-#### 🔄 Cross-Implementation Consistency Verification
-- Automatic detection of available hardware implementations
-- Verification that all implementations produce identical encryption results
-- Random parameter testing for enhanced test coverage
+- **Known-answer tests**: 9 FIPS-197 and NIST SP 800-38A vectors covering
+  ECB, CBC, and CTR with 128/192/256-bit keys
+- **Deterministic matrix**: 15 mode/key/padding configurations across 25
+  boundary and multi-block lengths (1 through 271 bytes), for 375 round trips
+- **Validation cases**: 6 malformed-PKCS7 rejection tests, giving 390
+  functional checks per standalone backend
+- **Unified validation**: direct in-process comparison of every compiled and
+  executable backend, plus guard-page, padding, in-place, unaligned-I/O, and
+  CTR-counter regression tests
+- **Performance tests**: 1, 4, 16, and 64 KiB workloads plus a 100 MiB
+  sustained-throughput benchmark; results are reported in MiB/s
+- **Custom deterministic parameters**: keys, IV, and counter can be supplied
+  with `--custom-params`
 
 ### Usage
 
@@ -292,6 +310,7 @@ make run-aes-ni      # AES-NI implementation
 make run-vaes        # VAES implementation
 make run-vaes512     # VAES512 implementation (if supported)
 make run-armv8       # ARMv8 implementation (ARM64 platforms)
+make run-waes        # Unified adaptive implementation
 ```
 
 #### Run Performance Tests
@@ -308,70 +327,27 @@ make compare
 # Auto-detect and compare all available implementations
 make cross-compare
 # or directly run:
-./compare-implementations
+./out/bin/compare-implementations
 
 # Manually specify implementations to compare
-make cmp-specific IMPLS='Generic AES-NI VAES VAES512'
+make cmp-specific IMPLS='Generic WAes AES-NI VAES VAES512'
 # or directly run:
-./compare-implementations Generic AES-NI VAES VAES512
+./out/bin/compare-implementations Generic WAes AES-NI VAES VAES512
 
 # Keep test files for debugging
-./compare-implementations --keep-files --verbose
+./out/bin/compare-implementations --keep-files --verbose
 ```
 
 #### Run Complete Test Suite
 ```bash
 make run-all         # Run functionality tests for all available implementations
 make cross-compare   # Run cross-implementation comparison
+make sanitize        # Run Generic and baseline WAes with ASan/UBSan
 ```
 
-### Test Output Example
-
-```bash
-$ make check-platform
-Platform Detection:
-  OS: Linux
-  Architecture: x86_64
-  Detected Platform: x86_64
-  AES-NI Support: yes
-  VAES Support: yes
-  VAES512 Support: yes
-  Building: Generic, AES-NI, VAES, VAES512 tests
-
-$ ./compare-implementations
-AES Implementation Comparison Tool
-==================================================
-Auto-detected implementations: Generic, AES-NI, VAES, VAES512
-Comparing implementations: Generic, AES-NI, VAES, VAES512
-
-Running tests for Generic...
-  ✓ Generic tests completed successfully
-Running tests for AES-NI...
-  ✓ AES-NI tests completed successfully
-Running tests for VAES...
-  ✓ VAES tests completed successfully
-Running tests for VAES512...
-  ✓ VAES512 tests completed successfully
-
-============================================================
-Cross-Implementation Comparison Results
-============================================================
-[PASS] ECB_128_PKCS7_16
-[PASS] ECB_128_PKCS7_32
-...
-[PASS] CTR_256_NoPad_1024
-
-============================================================
-SUMMARY REPORT
-============================================================
-Implementations tested: Generic, AES-NI, VAES, VAES512
-Total tests: 54
-Passed: 54
-Failed: 0
-Success rate: 100.0%
-
-🎉 All tests PASSED! All implementations are equivalent.
-```
+`make cross-compare` auto-detects `Generic`, `WAes`, and any supported hardware
+backends. It compares the 375 deterministic matrix records. The exact backend
+list is platform- and compiler-dependent.
 
 ## Compatibility Information
 
@@ -379,11 +355,11 @@ Success rate: 100.0%
 
 | Implementation | Minimum Hardware Requirements | Recommended Use |
 |---------------|------------------------------|-----------------|
-| Generic | Any CPU | Compatibility-first scenarios |
-| AES-NI | Intel Westmere (2010+)<br>AMD Bulldozer (2011+) | General x86 servers |
-| VAES | Intel Ice Lake (2019+)<br>AMD Zen 3 (2020+) | Modern high-performance servers |
-| VAES512 | Intel Skylake-X (2017+)<br>Intel Ice Lake (2019+) | Specialized high-performance computing |
-| ARMv8 | ARMv8-A with Crypto extensions | ARM64 servers/mobile devices |
+| Generic | Any target with a C++11 compiler | Compatibility-first scenarios |
+| AES-NI | x86 with SSSE3 and AES | General x86 systems |
+| VAES | x86 with SSSE3, AES, AVX2, and VAES | Parallelizable workloads on modern x86 systems |
+| VAES512 | x86 with SSSE3, AES, AVX2, VAES, AVX512F/BW/DQ/VL | Systems verified to expose all required features |
+| ARMv8 | AArch64 with the Crypto Extension | ARM64 servers/mobile devices |
 
 ### Which header should I use?
 

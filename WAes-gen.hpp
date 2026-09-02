@@ -12,7 +12,9 @@ enum class Padding {
 
 namespace detail {
 
-struct aesTable {
+// A class template keeps the header C++11-compatible and makes the static
+// table definitions below valid in multiple translation units.
+template <typename Tag = void> struct aesTable {
 protected:
   alignas(64) static const uint8_t m_sBox[256];
   alignas(64) static const uint8_t m_invSbox[256];
@@ -55,7 +57,8 @@ protected:
   }
 };
 
-alignas(64) const uint8_t aesTable::m_sBox[256] = {
+template <typename Tag>
+alignas(64) const uint8_t aesTable<Tag>::m_sBox[256] = {
     /* 0 1 2 3 4 5 6 7 8 9 a b c d e f */
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5,
     0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76, /*0*/
@@ -91,7 +94,8 @@ alignas(64) const uint8_t aesTable::m_sBox[256] = {
     0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16, /*f*/
 };
 
-alignas(64) const uint8_t aesTable::m_invSbox[256] = {
+template <typename Tag>
+alignas(64) const uint8_t aesTable<Tag>::m_invSbox[256] = {
     /* 0 1 2 3 4 5 6 7 8 9 a b c d e f */
     0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38,
     0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb, /*0*/
@@ -127,7 +131,8 @@ alignas(64) const uint8_t aesTable::m_invSbox[256] = {
     0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d, /*f*/
 };
 
-alignas(64) const uint32_t aesTable::Te0[256] = {
+template <typename Tag>
+alignas(64) const uint32_t aesTable<Tag>::Te0[256] = {
     0xa56363c6u, 0x847c7cf8u, 0x997777eeu, 0x8d7b7bf6u, 0x0df2f2ffu,
     0xbd6b6bd6u, 0xb16f6fdeu, 0x54c5c591u, 0x50303060u, 0x03010102u,
     0xa96767ceu, 0x7d2b2b56u, 0x19fefee7u, 0x62d7d7b5u, 0xe6abab4du,
@@ -182,7 +187,8 @@ alignas(64) const uint32_t aesTable::Te0[256] = {
     0x3a16162cu,
 };
 
-alignas(64) const uint32_t aesTable::Te1[256] = {
+template <typename Tag>
+alignas(64) const uint32_t aesTable<Tag>::Te1[256] = {
     0xc6a56363u, 0xf8847c7cu, 0xee997777u, 0xf68d7b7bu, 0xff0df2f2u,
     0xd6bd6b6bu, 0xdeb16f6fu, 0x9154c5c5u, 0x60503030u, 0x02030101u,
     0xcea96767u, 0x567d2b2bu, 0xe719fefeu, 0xb562d7d7u, 0x4de6ababu,
@@ -237,7 +243,8 @@ alignas(64) const uint32_t aesTable::Te1[256] = {
     0x2c3a1616u,
 };
 
-alignas(64) const uint32_t aesTable::Te2[256] = {
+template <typename Tag>
+alignas(64) const uint32_t aesTable<Tag>::Te2[256] = {
     0x63c6a563u, 0x7cf8847cu, 0x77ee9977u, 0x7bf68d7bu, 0xf2ff0df2u,
     0x6bd6bd6bu, 0x6fdeb16fu, 0xc59154c5u, 0x30605030u, 0x01020301u,
     0x67cea967u, 0x2b567d2bu, 0xfee719feu, 0xd7b562d7u, 0xab4de6abu,
@@ -292,7 +299,8 @@ alignas(64) const uint32_t aesTable::Te2[256] = {
     0x162c3a16u,
 };
 
-alignas(64) const uint32_t aesTable::Te3[256] = {
+template <typename Tag>
+alignas(64) const uint32_t aesTable<Tag>::Te3[256] = {
     0x6363c6a5u, 0x7c7cf884u, 0x7777ee99u, 0x7b7bf68du, 0xf2f2ff0du,
     0x6b6bd6bdu, 0x6f6fdeb1u, 0xc5c59154u, 0x30306050u, 0x01010203u,
     0x6767cea9u, 0x2b2b567du, 0xfefee719u, 0xd7d7b562u, 0xabab4de6u,
@@ -347,7 +355,8 @@ alignas(64) const uint32_t aesTable::Te3[256] = {
     0x16162c3au,
 };
 
-alignas(64) const uint32_t aesTable::Td0[256] = {
+template <typename Tag>
+alignas(64) const uint32_t aesTable<Tag>::Td0[256] = {
     0x50a7f451u, 0x5365417eu, 0xc3a4171au, 0x965e273au, 0xcb6bab3bu,
     0xf1459d1fu, 0xab58faacu, 0x9303e34bu, 0x55fa3020u, 0xf66d76adu,
     0x9176cc88u, 0x254c02f5u, 0xfcd7e54fu, 0xd7cb2ac5u, 0x80443526u,
@@ -402,7 +411,8 @@ alignas(64) const uint32_t aesTable::Td0[256] = {
     0x4257b8d0u,
 };
 
-alignas(64) const uint32_t aesTable::Td1[256] = {
+template <typename Tag>
+alignas(64) const uint32_t aesTable<Tag>::Td1[256] = {
     0x5150a7f4u, 0x7e536541u, 0x1ac3a417u, 0x3a965e27u, 0x3bcb6babu,
     0x1ff1459du, 0xacab58fau, 0x4b9303e3u, 0x2055fa30u, 0xadf66d76u,
     0x889176ccu, 0xf5254c02u, 0x4ffcd7e5u, 0xc5d7cb2au, 0x26804435u,
@@ -457,7 +467,8 @@ alignas(64) const uint32_t aesTable::Td1[256] = {
     0xd04257b8u,
 };
 
-alignas(64) const uint32_t aesTable::Td2[256] = {
+template <typename Tag>
+alignas(64) const uint32_t aesTable<Tag>::Td2[256] = {
     0xf45150a7u, 0x417e5365u, 0x171ac3a4u, 0x273a965eu, 0xab3bcb6bu,
     0x9d1ff145u, 0xfaacab58u, 0xe34b9303u, 0x302055fau, 0x76adf66du,
     0xcc889176u, 0x02f5254cu, 0xe54ffcd7u, 0x2ac5d7cbu, 0x35268044u,
@@ -512,7 +523,8 @@ alignas(64) const uint32_t aesTable::Td2[256] = {
     0xb8d04257u,
 };
 
-alignas(64) const uint32_t aesTable::Td3[256] = {
+template <typename Tag>
+alignas(64) const uint32_t aesTable<Tag>::Td3[256] = {
     0xa7f45150u, 0x65417e53u, 0xa4171ac3u, 0x5e273a96u, 0x6bab3bcbu,
     0x459d1ff1u, 0x58faacabu, 0x03e34b93u, 0xfa302055u, 0x6d76adf6u,
     0x76cc8891u, 0x4c02f525u, 0xd7e54ffcu, 0xcb2ac5d7u, 0x44352680u,
@@ -580,7 +592,7 @@ template <> struct aesN<256> {
   enum { Nk = 8, Nr = 14 };
 };
 
-template <int N> class CWAes final : public detail::aesTable {
+template <int N> class CWAes final : public detail::aesTable<> {
 public:
   // If |iv| is null, mode is ECB; |iv| not be null, mode is CBC; if it is CTR,
   // after set counter. CTR mode must be NonePadding!

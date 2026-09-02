@@ -314,11 +314,11 @@ TestResult benchmarkImplementation(const uint8_t *key, size_t keyLen,
 
   // Calculate throughput
   double totalTime = (encryptTime + decryptTime) / 1000.0; // Convert to seconds
-  double throughputMBps =
-      (dataSize * 2.0) / (1024.0 * 1024.0) / totalTime; // MB/s
+  double throughputMiBps =
+      (dataSize * 2.0) / (1024.0 * 1024.0) / totalTime; // MiB/s
 
   return TestResult(true,
-                    "Throughput: " + std::to_string(throughputMBps) + " MB/s",
+                    "Throughput: " + std::to_string(throughputMiBps) + " MiB/s",
                     encryptTime, decryptTime, dataSize);
 }
 
@@ -488,14 +488,14 @@ TestResult benchmarkLargeData(const uint8_t *key, size_t keyLen,
     return TestResult(false, "Decryption verification failed for large data");
   }
 
-  // Calculate throughput (MB/s)
+  // Calculate throughput (MiB/s)
   double totalTimeSeconds = (encryptTime + decryptTime) / 1000.0;
-  double dataSizeMB =
+  double dataSizeMiB =
       (dataSize * 2.0) / (1024.0 * 1024.0); // *2 for encrypt+decrypt
-  double throughputMBps = dataSizeMB / totalTimeSeconds;
+  double throughputMiBps = dataSizeMiB / totalTimeSeconds;
 
   return TestResult(true,
-                    "Throughput: " + std::to_string(throughputMBps) + " MB/s",
+                    "Throughput: " + std::to_string(throughputMiBps) + " MiB/s",
                     encryptTime, decryptTime, dataSize);
 }
 
@@ -524,7 +524,7 @@ bool runPerformanceTests(const std::string &implementationName,
   std::cout << std::left << std::setw(8) << "Mode" << std::setw(8) << "KeySize"
             << std::setw(10) << "DataSize" << std::setw(12) << "Encrypt(ms)"
             << std::setw(12) << "Decrypt(ms)" << std::setw(15)
-            << "Throughput(MB/s)" << std::endl;
+            << "Throughput(MiB/s)" << std::endl;
   std::cout << std::string(75, '-') << std::endl;
 
   for (const auto &keyConfig : keys) {
@@ -565,18 +565,19 @@ bool runPerformanceTests(const std::string &implementationName,
     }
   }
 
-  // 100MB Performance Benchmark
-  std::cout << "\n--- 100MB Large Data Performance Benchmark ---" << std::endl;
-  std::cout
-      << "Testing with 100MB data size for realistic throughput measurement..."
-      << std::endl;
+  // 100 MiB Performance Benchmark
+  std::cout << "\n--- 100 MiB Large Data Performance Benchmark ---"
+            << std::endl;
+  std::cout << "Testing with 100 MiB data size for realistic throughput "
+               "measurement..."
+            << std::endl;
   std::cout << std::left << std::setw(8) << "Mode" << std::setw(8) << "KeySize"
             << std::setw(12) << "Encrypt(ms)" << std::setw(12) << "Decrypt(ms)"
-            << std::setw(20) << "Throughput(MB/s)" << std::setw(12) << "Status"
+            << std::setw(20) << "Throughput(MiB/s)" << std::setw(12) << "Status"
             << std::endl;
   std::cout << std::string(75, '-') << std::endl;
 
-  const size_t LARGE_DATA_SIZE = 100 * 1024 * 1024; // 100MB
+  const size_t LARGE_DATA_SIZE = 100 * 1024 * 1024; // 100 MiB
 
   for (const auto &keyConfig : keys) {
     for (const auto &mode : modes) {
@@ -616,7 +617,7 @@ bool runPerformanceTests(const std::string &implementationName,
     }
   }
 
-  std::cout << "\nNote: 100MB benchmark practical testing time." << std::endl;
+  std::cout << "\nNote: the 100 MiB benchmark may take some time." << std::endl;
   std::cout << "Throughput includes both encryption and decryption operations."
             << std::endl;
   return allSuccessful;

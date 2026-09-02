@@ -4,7 +4,10 @@
 
 This test suite is designed to verify multiple AES implementations across different platforms: generic code (all platforms), AES-NI instruction set (x86-64), VAES instruction set (x86-64), VAES512 instruction set (x86-64), and ARMv8 Crypto Extensions (ARM64).
 
-**Important Design Philosophy**: These AES implementations are switched by replacing header files, not by using them simultaneously in the same program. Each test program contains only one implementation to ensure interface consistency.
+The standalone test programs each include one `WAes-*.hpp` implementation to
+verify that the headers remain interchangeable. The unified `test_waes`
+program is different: it instantiates every compiled backend that is executable
+on the current machine and compares them directly in one process.
 
 ## File Structure
 
@@ -15,18 +18,22 @@ This test suite is designed to verify multiple AES implementations across differ
 - `test_known_answers.hpp` - FIPS-197 and NIST SP 800-38A known-answer vectors
 - `test_template.hpp` - Shared functional tests and benchmarks
 - `test_entry.hpp` - Common standalone-header executable entry point
+- `test_waes_adapter.hpp` - Adapter used to run the shared suite through `WAes.hpp`
 - `test_waes_cross.hpp` - Unified-header cross-backend validation
 - `test_waes_regressions.hpp` - Guard-page and bug regression tests
 
 ### Test Files
 - `test_generic.cpp` - Generic AES implementation test (WAes-gen.hpp)
+- `test_generic_multitu_main.cpp` - Entry point for the C++11 multi-TU link test
+- `test_generic_multitu.cpp` - Second translation unit for Generic header/link testing
 - `test_aes_ni.cpp` - AES-NI instruction set implementation test (WAes-ni.hpp) [x86-64 only]
 - `test_vaes.cpp` - VAES instruction set implementation test (WAes-vaes.hpp) [x86-64 only]
 - `test_vaes512.cpp` - VAES512 instruction set implementation test (WAes-vaes512.hpp) [x86-64 only]
 - `test_armv8.cpp` - ARMv8 Crypto Extensions implementation test (WAes-armv8.hpp) [ARM64 only]
+- `test_waes.cpp` - Unified adaptive-header test and in-process backend comparison
 
 ### Build and Run Files
-- `Makefile` - Build system with automatic VAES support detection
+- `Makefile` - Build system with platform and instruction-set detection
 - `.gitignore` - Ignores the `out/` output directory
 
 ### Comparison Tool
@@ -41,12 +48,18 @@ out/
 
 ## Test Coverage
 
-Each implementation tests:
+Each standalone implementation tests:
 
-- Standard known-answer encryption and decryption vectors
-- Round-trip behavior across boundary and multi-block lengths
-- Deterministic rejection of malformed PKCS7 padding
+- 9 standard known-answer encryption/decryption vectors
+- 375 deterministic round trips: 15 mode/key/padding configurations across
+  25 boundary and multi-block lengths
+- 6 deterministic malformed-PKCS7 rejection cases
 - A nonzero process exit code when any correctness check fails
+
+That gives 390 functional checks per standalone backend. The unified test also
+runs the same shared suite, directly cross-validates its available backends, and
+runs backend availability, guard-page, padding, in-place, unaligned-I/O, and CTR
+counter regressions.
 
 ### AES Modes
 - **ECB Mode** - Electronic Codebook mode
@@ -64,11 +77,16 @@ Each implementation tests:
 - **No Padding** - CTR mode doesn't require padding
 
 ### Data Lengths
-Test various data lengths to verify all scenarios:
-- Partial blocks (1-15 bytes)
-- Complete blocks (16 bytes)
-- Multiple blocks (32, 48, 64, 80, 96, 112, 128 bytes)
-- Large datasets (256+ bytes for VAES 256-bit parallel processing, 512+ bytes for VAES512 512-bit parallel processing)
+
+The functional matrix uses these 25 deterministic lengths:
+
+```text
+1, 7, 15, 16, 17, 23, 31, 32, 33, 39, 47, 48, 64,
+65, 71, 79, 80, 96, 112, 128, 144, 160, 192, 256, 271
+```
+
+They cover partial blocks, exact block boundaries, vector-width boundaries,
+and multi-block tails. Larger inputs belong to the performance suite below.
 
 ### Performance Testing
 Each implementation includes comprehensive performance benchmarks:
@@ -78,17 +96,18 @@ Each implementation includes comprehensive performance benchmarks:
 - **Multiple Iterations**: 100 iterations for accurate timing
 - **Detailed Metrics**: Separate encryption/decryption timing and throughput calculation
 
-#### 100MB Large Data Benchmark
-- **Realistic Throughput**: Tests with 100MB data size for real-world performance measurement
-- **Optimized Iterations**: Reduced to 1 iterations for practical testing time
+#### 100 MiB Large Data Benchmark
+- **Sustained Throughput**: Tests a 100 MiB buffer
+- **Optimized Iterations**: Reduced to 1 iteration for practical testing time
 - **Comprehensive Coverage**: All AES modes (ECB, CBC, CTR) and key sizes (128-bit, 256-bit)
 - **Verification**: Includes correctness verification to ensure data integrity
 - **Performance Metrics**: 
   - Individual encryption and decryption timing
-  - Combined throughput in MB/s (includes both operations)
+  - Combined throughput in MiB/s (includes both operations)
   - Pass/Fail status for each test
 
-The 100MB benchmark provides more accurate performance measurements for sustained operations and helps identify the real-world performance characteristics of each implementation.
+The 100 MiB benchmark measures sustained performance. Results still depend on
+the CPU, compiler, frequency behavior, and selected AES mode.
 
 ## Usage
 
@@ -122,6 +141,7 @@ own explicit compiler flags in the normal build.
 ### Run Specific Implementation Tests
 ```bash
 make run-generic      # Generic implementation functional test
+make run-generic-multitu # Generic C++11 multi-TU link test
 make run-aes-ni       # AES-NI implementation functional test (x86-64 only)
 make run-vaes         # VAES implementation functional test (x86-64, if supported)
 make run-vaes512      # VAES512 implementation functional test (x86-64, if supported)
@@ -150,20 +170,23 @@ make report-armv8     # ARMv8 report → out/reports/ARMv8_<timestamp>.txt
 ### Run Individual Test Programs
 ```bash
 ./out/bin/test_generic        # Functional test
-./out/bin/test_generic perf   # Performance test (includes 100MB benchmark)
+./out/bin/test_generic_multitu # C++11 multi-TU link test
+./out/bin/test_generic perf   # Performance test (includes 100 MiB benchmark)
 ./out/bin/test_aes_ni         # Functional test (x86-64 only)
-./out/bin/test_aes_ni perf    # Performance test (includes 100MB benchmark, x86-64 only)
+./out/bin/test_aes_ni perf    # Performance test (includes 100 MiB benchmark, x86-64 only)
 ./out/bin/test_vaes            # Functional test (x86-64 only)
-./out/bin/test_vaes perf       # Performance test (includes 100MB benchmark, x86-64 only)
+./out/bin/test_vaes perf       # Performance test (includes 100 MiB benchmark, x86-64 only)
 ./out/bin/test_vaes512         # Functional test (x86-64 only)
-./out/bin/test_vaes512 perf    # Performance test (includes 100MB benchmark, x86-64 only)
+./out/bin/test_vaes512 perf    # Performance test (includes 100 MiB benchmark, x86-64 only)
 ./out/bin/test_armv8           # Functional test (ARM64 only)
-./out/bin/test_armv8 perf      # Performance test (includes 100MB benchmark, ARM64 only)
+./out/bin/test_armv8 perf      # Performance test (includes 100 MiB benchmark, ARM64 only)
+./out/bin/test_waes            # Unified functional and cross-backend tests
+./out/bin/test_waes perf       # Unified performance test (includes 100 MiB benchmark)
 ```
 
 ### Quick Test
 ```bash
-make quick-test       # Run simplified tests
+make quick-test       # Run every functional suite with concise output
 ```
 
 ### Check Platform
@@ -189,12 +212,14 @@ The comparison tool automatically compares results from different AES implementa
 
 #### x86-64 Platform
 - **Generic**: Pure C++ implementation (all platforms supported)
+- **WAes**: Unified adaptive header (always built; selects among compiled backends)
 - **AES-NI**: Intel AES-NI hardware-accelerated implementation
 - **VAES**: Intel VAES (AVX2) hardware-accelerated implementation
 - **VAES512**: Intel VAES (AVX512) hardware-accelerated implementation
 
 #### ARM64 Platform
 - **Generic**: Pure C++ implementation (all platforms supported)
+- **WAes**: Unified adaptive header (always built; selects among compiled backends)
 - **ARMv8**: ARM Crypto Extensions hardware-accelerated implementation
 
 The tool automatically detects the current platform and only compares available implementations.
@@ -230,7 +255,7 @@ make cmp-specific IMPLS='Generic ARMv8'
 
 **Basic Usage**:
 ```bash
-./compare-implementations [OPTIONS] [IMPLEMENTATIONS...]
+./out/bin/compare-implementations [OPTIONS] [IMPLEMENTATIONS...]
 ```
 
 **Available Options**:
@@ -320,16 +345,18 @@ make clean
 - Single-block processing, suitable for small to medium data
 
 ### VAES Implementation
-- Requires CPU with AVX2 and AES-NI instruction set support
-- Better performance than AES-NI for large datasets (≥32 bytes)
+- Requires CPU/compiler support for SSSE3, AES, AVX2, and VAES
+- Uses its two-block path where the selected mode permits parallel work; 32
+  bytes is an implementation threshold, not a guaranteed performance crossover
 - 256-bit parallel processing, handles 2 AES blocks simultaneously
 - Uses VAES instructions for vectorized AES operations
 
 ### VAES512 Implementation
-- Requires CPU with AVX-512 and VAES instruction set support
-- Highest theoretical performance for very large datasets (≥64 bytes)
+- Requires SSSE3, AES, AVX2, VAES, and AVX512F/BW/DQ/VL support
+- Uses its four-block path where the selected mode permits parallel work; 64
+  bytes is an implementation threshold, not a guaranteed performance crossover
 - 512-bit parallel processing, handles 4 AES blocks simultaneously
-- Extremely limited hardware support, only available on newest CPUs
+- Availability must be determined from CPU feature bits, not processor age
 
 ### ARMv8 Implementation
 - Requires ARM64 CPU with Crypto Extensions support
@@ -354,7 +381,8 @@ If you see support not detected messages, it means:
 
 ### Compilation Errors
 Ensure:
-- Using a C++20 compatible compiler (required by `WAes.hpp`; C++17 suffices for standalone headers)
+- Using a C++20-compatible compiler for this test suite and `WAes.hpp`;
+  standalone headers themselves require only C++11
 - Compiler supports target instruction sets
 - Correctly set `-march=native` flag
 
@@ -366,7 +394,11 @@ If tests fail:
 4. Compare output results from different implementations
 
 ### Implementation Consistency Verification
-Due to the design philosophy of switching implementations via header file replacement, direct comparison within the same program is not possible. Use the comparison tool for automated verification across implementations.
+
+`test_waes` compares all available unified-header backends directly in one
+process. `compare-implementations` separately runs each standalone executable
+and compares their deterministic result files, which also verifies that the
+independent headers remain equivalent.
 
 ### Comparison Tool Troubleshooting
 
@@ -406,15 +438,17 @@ To add new tests:
 
 ### VAES Implementation Details
 The current VAES implementation (`WAes-vaes.hpp`) uses 256-bit VAES instructions:
-- Based on AVX2 instruction set + AES-NI instruction set
+- Based on SSSE3, AES, AVX2, and VAES instruction sets
 - Processes 2 AES blocks at once (32 bytes)
-- Uses VAES parallel processing for data ≥32 bytes
-- Falls back to AES-NI processing for data <32 bytes
-- Broad hardware compatibility (CPUs after Haswell 2013)
+- Uses VAES parallel processing for eligible paths with at least 32 bytes
+- Uses 128-bit AES instructions for remaining blocks and serial paths
+- Requires explicit VAES feature detection; AVX2-only processors such as
+  Haswell are not sufficient
 
 ### 512-bit VAES Implementation
 The project also includes a 512-bit VAES implementation (`WAes-vaes512.hpp`):
 - Based on AVX-512 instruction set + VAES instruction set
 - Processes 4 AES blocks at once (64 bytes)
-- Theoretically higher performance but extremely limited hardware support
-- Cannot run on most machines due to AVX-512 support issues
+- Can improve eligible large-buffer paths, but wider vectors do not guarantee
+  better performance on every CPU or mode
+- Requires every feature listed above and must be guarded by feature detection

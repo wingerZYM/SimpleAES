@@ -1,5 +1,6 @@
 CXX = g++
 CXXFLAGS = -std=c++20 -O3 -Wall -Wextra
+CXX11FLAGS = -std=c++11 -O3 -Wall -Wextra
 INCLUDES = -I..
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
@@ -74,9 +75,11 @@ endif
 
 # Full paths of test binaries (derived from TESTS list)
 BINS = $(addprefix $(BINDIR)/, $(TESTS))
+BUILD_CHECKS = $(BINDIR)/test_generic_multitu
 
 # Source files
 GENERIC_SRC = test_generic.cpp
+GENERIC_MULTITU_SRC = test_generic_multitu_main.cpp test_generic_multitu.cpp
 AESNI_SRC = test_aes_ni.cpp
 VAES_SRC = test_vaes.cpp
 VAES512_SRC = test_vaes512.cpp
@@ -88,9 +91,9 @@ COMPARE_SRC = compare_implementations.cpp
 COMMON_DEPS = test_data.hpp test_utils.hpp test_options.hpp test_known_answers.hpp test_template.hpp test_entry.hpp
 WAES_DEPS = test_waes_adapter.hpp test_waes_cross.hpp test_waes_regressions.hpp
 
-.PHONY: all clean check-platform run-all run-generic run-aes-ni run-vaes run-vaes512 run-armv8 run-waes cross-compare run-perf-all run-perf-generic run-perf-aes-ni run-perf-vaes run-perf-vaes512 run-perf-armv8 run-perf-waes compare cmp-specific report-generic report-aes-ni report-vaes report-vaes512 report-armv8 report-waes report-all sanitize sanitize-generic sanitize-waes
+.PHONY: all clean check-platform run-all run-generic run-generic-multitu run-aes-ni run-vaes run-vaes512 run-armv8 run-waes cross-compare run-perf-all run-perf-generic run-perf-aes-ni run-perf-vaes run-perf-vaes512 run-perf-armv8 run-perf-waes compare cmp-specific report-generic report-aes-ni report-vaes report-vaes512 report-armv8 report-waes report-all sanitize sanitize-generic sanitize-waes
 
-all: check-platform $(BINS)
+all: check-platform $(BINS) $(BUILD_CHECKS)
 
 check-platform:
 	@echo "Platform Detection:"
@@ -102,29 +105,33 @@ ifeq ($(PLATFORM),x86_64)
 	@echo "  VAES Support: $(VAES_SUPPORT)"
 	@echo "  VAES512 Support: $(VAES512_SUPPORT)"
 	@if [ "$(VAES512_SUPPORT)" = "yes" ]; then \
-		echo "  Building: Generic, AES-NI, VAES, VAES512 tests"; \
+		echo "  Building: Generic, WAes, AES-NI, VAES, VAES512 tests"; \
 	elif [ "$(VAES_SUPPORT)" = "yes" ]; then \
-		echo "  Building: Generic, AES-NI, VAES tests"; \
+		echo "  Building: Generic, WAes, AES-NI, VAES tests"; \
 	elif [ "$(AES_NI_SUPPORT)" = "yes" ]; then \
-		echo "  Building: Generic, AES-NI tests"; \
+		echo "  Building: Generic, WAes, AES-NI tests"; \
 	else \
-		echo "  Building: Generic test only"; \
+		echo "  Building: Generic and WAes tests"; \
 	fi
 else ifeq ($(PLATFORM),arm64)
 	@echo "  ARM Crypto Support: $(ARM_CRYPTO_SUPPORT)"
 	@if [ "$(ARM_CRYPTO_SUPPORT)" = "yes" ]; then \
-		echo "  Building: Generic, ARMv8 tests"; \
+		echo "  Building: Generic, WAes, ARMv8 tests"; \
 	else \
-		echo "  Building: Generic test only"; \
+		echo "  Building: Generic and WAes tests"; \
 	fi
 else
-	@echo "  Building: Generic test only (fallback)"
+	@echo "  Building: Generic and WAes tests (fallback)"
 endif
 	@echo ""
 
 $(BINDIR)/test_generic: $(GENERIC_SRC) $(COMMON_DEPS) ../WAes-gen.hpp
 	@mkdir -p $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(GENERIC_SRC)
+
+$(BINDIR)/test_generic_multitu: $(GENERIC_MULTITU_SRC) ../WAes-gen.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) $(INCLUDES) -o $@ $(GENERIC_MULTITU_SRC)
 
 $(BINDIR)/test_aes_ni: $(AESNI_SRC) $(COMMON_DEPS) ../WAes-ni.hpp
 ifeq ($(AES_NI_SUPPORT),yes)
@@ -193,6 +200,10 @@ $(BINDIR)/compare-implementations: $(COMPARE_SRC)
 run-generic: $(BINDIR)/test_generic
 	@echo "=== Running Generic Implementation Tests ==="
 	./$(BINDIR)/test_generic
+
+run-generic-multitu: $(BINDIR)/test_generic_multitu
+	@echo "=== Running Generic C++11 Multi-TU Link Test ==="
+	./$(BINDIR)/test_generic_multitu
 
 run-aes-ni: $(BINDIR)/test_aes_ni
 ifeq ($(AES_NI_SUPPORT),yes)
@@ -272,8 +283,10 @@ run-perf-waes: $(BINDIR)/test_waes
 	./$(BINDIR)/test_waes perf
 
 # Run all functionality tests
-run-all: $(BINS)
+run-all: $(BINS) $(BUILD_CHECKS)
 	@echo "=== Running All AES Implementation Tests ==="
+	@echo ""
+	@$(MAKE) run-generic-multitu
 	@echo ""
 	@$(MAKE) run-generic
 	@echo ""
@@ -325,8 +338,10 @@ endif
 
 # Concise output, while still running each complete suite. pipefail preserves
 # the test executable's exit status through tail.
-quick-test: $(BINS)
+quick-test: $(BINS) $(BUILD_CHECKS)
 	@echo "=== Quick Test ==="
+	@echo "Testing Generic C++11 multi-TU link..."
+	@./$(BINDIR)/test_generic_multitu
 	@echo "Testing Generic implementation..."
 	@./$(BINDIR)/test_generic | tail -8
 ifeq ($(PLATFORM),x86_64)
@@ -457,6 +472,7 @@ help:
 	@echo ""
 	@echo "Run (stdout only):"
 	@echo "  run-all           - Run all functionality tests"
+	@echo "  run-generic-multitu - Run Generic C++11 multi-TU link test"
 	@echo "  run-generic       - Run generic implementation test"
 	@echo "  run-aes-ni        - Run AES-NI implementation test"
 	@echo "  run-vaes          - Run VAES implementation test"
