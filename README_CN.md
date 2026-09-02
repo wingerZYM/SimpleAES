@@ -20,15 +20,15 @@
 |--------|------|----------|
 | `WAes-gen.hpp` | 纯 C++（通用） | 无（C++11） |
 | `WAes-ni.hpp` | Intel AES-NI | `-mssse3 -maes` |
-| `WAes-vaes.hpp` | Intel VAES (AVX2) | `-mavx2 -mvaes` |
-| `WAes-vaes512.hpp` | Intel VAES (AVX512) | `-mavx512f -mvaes` |
+| `WAes-vaes.hpp` | Intel VAES (AVX2) | `-mavx2 -maes -mvaes` |
+| `WAes-vaes512.hpp` | Intel VAES (AVX512) | `-mavx512f -mavx512bw -mavx512dq -mavx512vl -maes -mvaes` |
 | `WAes-armv8.hpp` | ARMv8-A Crypto | `-march=armv8-a+crypto` |
 
 **适合场景**：运行平台明确的服务端程序或嵌入式系统。编译时直接指定最优后端，零间接调用，性能最大化。
 
 ### 统一自适应头文件（`WAes.hpp`）
 
-`WAes.hpp` 将所有后端整合到单一文件中，根据编译期平台检测自动选择最优实现。通过 `WAes::Ptr` 多态接口和工厂函数使用：
+`WAes.hpp` 将各实现整合到单一文件中，从当前构建已编入的后端中自动选择；在 x86 上还会先检查 CPU 能力和操作系统 SIMD 状态。通过 `WAes::Ptr` 多态接口和工厂函数使用：
 
 ```c++
 #include "WAes.hpp"
@@ -46,7 +46,7 @@ auto aes = WAes::Create<256>(WAes::Backend::Generic, key, keyLen);
 
 性能测试表明，统一版本与独立头文件性能相当——虚函数调用开销相对于 AES 计算本身可以忽略不计。
 
-**适合场景**：需要分发到不同硬件环境的客户端程序或库。一个二进制文件自动适配 x86、ARM 或通用回退，无需用户关心后端选择。
+**适合场景**：希望统一 API，并在当前构建包含的后端之间自动选择的程序或库。将 GCC/Clang 构建作为可跨代 CPU 分发的 x86 fat binary 前，请先阅读下方编译说明。
 
 ### 性能对比
 
@@ -127,6 +127,12 @@ if (!aes.InvCipher(ciphertext, cipherLen, plaintext, plainLen)) {
 
 不同的模式和补位方式都是在 AES 对象构造的时候决定。后续可以通过 `SetIV` 或者 `SetCounter` 方法来切换为对应的模式。加解密的接口方法所有模式都是通用的，没有区别。
 
+密钥长度有意保留历史兼容行为：短密钥补零，长密钥按所选 AES 强度截断为 16、24 或 32 字节。需要严格密钥检查的应用应在构造前拒绝长度不精确的密钥。
+
+Zero padding 只在尾块不足 16 字节时补零；输入已经按块对齐时不会额外增加一块。由于明文末尾的零与填充无法区分，Zero-padding 解密会移除尾部零。PKCS7 则始终添加填充，输入按块对齐时也会增加一个完整的 16 字节填充块。
+
+CTR 将传入的 16 字节值视为计数块：前 8 字节保持不变，后 8 字节按大端整数模 2^64 递增。数值重载 `SetCounter(iv, nonce, counter)` 会将三个字段都按大端序列化。
+
 ## 使用统一头文件（`WAes.hpp`）
 
 `WAes.hpp` 通过多态接口提供相同的操作，并附加了额外的便捷功能：
@@ -161,7 +167,11 @@ aes->InvCipher(ct, pt);              // 解密 vector → vector
 for (auto b : WAes::AvailableBackends())
     std::cout << WAes::GetImplName(b) << "\n";
 
-// 强制使用特定后端
+// 查看二进制中编入的全部后端（包括当前机器不可运行的后端）
+for (auto b : WAes::CompiledBackends())
+    std::cout << WAes::GetImplName(b) << "\n";
+
+// 强制使用特定后端；CPU/OS 不支持时返回 nullptr
 auto aes = WAes::Create<256>(WAes::Backend::Generic, key, 32);
 ```
 
@@ -182,15 +192,15 @@ RAII 作用域 IV（离开作用域后自动恢复原始 IV/模式）：
 |--------|-------------|
 | `WAes-gen.hpp` | 无（C++11） |
 | `WAes-ni.hpp` | `-mssse3 -maes` |
-| `WAes-vaes.hpp` | `-mavx2 -mvaes` |
-| `WAes-vaes512.hpp` | `-mavx512f -mvaes` |
+| `WAes-vaes.hpp` | `-mavx2 -maes -mvaes` |
+| `WAes-vaes512.hpp` | `-mavx512f -mavx512bw -mavx512dq -mavx512vl -maes -mvaes` |
 | `WAes-armv8.hpp` | `-march=armv8-a+crypto`（Linux/macOS ARM64） |
 
 所有独立变体最低要求 `-std=c++11`，推荐使用 `-std=c++17 -O3`。
 
 ### 统一头文件（`WAes.hpp`）
 
-`WAes.hpp` 要求 **C++20**（使用了 `std::span`）。通过预处理宏检测目标平台，自动启用编译参数所允许的所有后端。使用 `-march=native` 让编译器自动启用当前主机 CPU 支持的全部指令集：
+`WAes.hpp` 要求 **C++20**（使用了 `std::span`）。它通过预处理宏检测编译目标，并启用编译参数允许的后端：
 
 ```shell
 # x86：自动启用 Generic + AES-NI + VAES/VAES512
@@ -199,6 +209,10 @@ c++ -std=c++20 -O3 -march=native WAes_example.cpp
 # ARM64 Linux
 c++ -std=c++20 -O3 -march=armv8-a+crypto WAes_example.cpp
 ```
+
+GCC 和 Clang 的指令集参数作用于整个翻译单元。使用 `-march=native` 生成的程序面向当前 CPU 等级，不能假定可在更老的 x86 CPU 上运行；若需要基线兼容，应不带 AES/VAES 目标参数进行编译，此时使用 Generic 后端。MSVC 构建会编入 x86 硬件实现，并在运行时通过 CPUID 与 XGETBV 检测；`AvailableBackends()` 只返回当前 CPU 和操作系统都能安全执行的实现。
+
+在 AArch64 上，统一头文件只有检测到 `__ARM_FEATURE_CRYPTO` 时才启用 ARM Crypto 后端。若工具链不提供该宏，可以定义 `WAES_ASSUME_ARM_CRYPTO`，但前提是部署硬件确定具备 Crypto Extension。
 
 ## 🧪 测试框架 (`tests/` 目录)
 
@@ -355,11 +369,11 @@ Success rate: 100.0%
 | 场景 | 推荐方案 |
 |------|----------|
 | 服务端程序、嵌入式，平台明确 | 对应 CPU 的独立头文件（如 `WAes-vaes.hpp`） |
-| 需要分发的客户端，硬件不确定 | `WAes.hpp`——自动适配每台机器的最优后端 |
+| 需要分发的 x86 客户端，硬件不确定 | MSVC 构建的 `WAes.hpp`，或 GCC/Clang 的 Generic 基线构建 |
 | 开发调试、CI 环境 | `WAes-gen.hpp` 或 `WAes.hpp` |
-| ARM64（移动端、Apple Silicon、树莓派等） | `WAes-armv8.hpp` 或 `WAes.hpp` |
+| 具备 Crypto Extension 的 ARM64 | `WAes-armv8.hpp` 或以 `+crypto` 为目标的 `WAes.hpp` |
 
-核心取舍：平台确定时，独立头文件路径最直接——无虚函数调用、无抽象层、性能最大化。程序需要在不同硬件上分发时，`WAes.hpp` 在保持相同吞吐量的前提下自动完成后端选择。
+核心取舍：平台确定时，独立头文件路径最直接——无虚函数调用、无抽象层、性能最大化。统一头文件集中 API，并在二进制实际编入的实现之间安全选择；二进制是否能跨 CPU 运行仍取决于上文所述的编译目标参数。
 
 ## 还有什么已知的问题吗？
 其实AES一部分操作是可以并发执行的。比如ECB的加解密，CBC的解密过程等。但是引入并发操作，必然导致代码的复杂。及小规模数据操作时，并发带来的性能提升，是否能够弥补并发带的开销也是个问题。因此，本着用最精简的方式满足绝大多数的使用场景的设计理念，本库就不做这方面的考虑。

@@ -9,7 +9,12 @@
 ### 核心文件
 - `test_data.hpp` - 共同的测试数据和常量
 - `test_utils.hpp` - 测试工具函数和辅助类
-- `test_template.hpp` - 通用测试模板，包含所有测试逻辑
+- `test_options.hpp` - 经过校验的命令行选项和自定义参数
+- `test_known_answers.hpp` - FIPS-197 与 NIST SP 800-38A 标准答案向量
+- `test_template.hpp` - 共享功能测试与性能测试
+- `test_entry.hpp` - 独立头文件测试的共用程序入口
+- `test_waes_cross.hpp` - 统一头文件的跨后端验证
+- `test_waes_regressions.hpp` - Guard page 与缺陷回归测试
 
 ### 测试文件
 - `test_generic.cpp` - 通用AES实现测试 (WAes-gen.hpp)
@@ -35,6 +40,11 @@ out/
 ## 测试内容
 
 每个实现都会测试：
+
+- 标准已知答案的加密与解密
+- 多种边界长度和多块数据的往返验证
+- 确定性拒绝非法 PKCS7 填充
+- 任意正确性测试失败时返回非零进程退出码
 
 ### AES模式
 - **ECB模式** - 电子密码本模式
@@ -95,6 +105,14 @@ make run-all
 ```bash
 make run-perf-all
 ```
+
+### 使用 Address/Undefined-Behavior Sanitizer
+```bash
+make sanitize
+```
+
+Sanitizer 目标会构建 Generic 实现和仅含 Generic 后端的基线
+`WAes.hpp` 测试；各硬件实现仍在普通构建中使用各自明确的指令集参数。
 
 ### 运行特定实现测试
 ```bash
@@ -394,4 +412,4 @@ cat out/reports/test_results_Generic.txt
 - 基于AVX-512指令集 + VAES指令集
 - 一次处理4个AES块（64字节）
 - 理论性能更高，但硬件支持极其有限
-- 由于AVX-512支持问题，实际无法在大多数机器上运行 
+- 由于AVX-512支持问题，实际无法在大多数机器上运行

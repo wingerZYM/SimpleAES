@@ -8,521 +8,480 @@
 
 // AES // ECB/CBC/CTR // PKCS7Padding/ZerosPadding
 
-enum class Padding
-{
-	Zeros,
-	PKCS7,
+enum class Padding {
+  Zeros,
+  PKCS7,
 };
 
 template <int> struct aesN;
-template <> struct aesN<128>
-{
-	enum { Nk = 4, Nr = 10 };
+template <> struct aesN<128> {
+  enum { Nk = 4, Nr = 10 };
 
-	static void keyExpansion(const uint8_t* key, __m128i* w)
-	{
-		auto assist = [](__m128i a, const __m128i& b)
-		{
-			a = _mm_xor_si128(a, _mm_slli_si128(a, 4));
-			a = _mm_xor_si128(a, _mm_slli_si128(a, 4));
-			a = _mm_xor_si128(a, _mm_slli_si128(a, 4));
-			a = _mm_xor_si128(a, _mm_shuffle_epi32(b, 0xff));
-			return a;
-		};
+  static void keyExpansion(const uint8_t *key, __m128i *w) {
+    auto assist = [](__m128i a, const __m128i &b) {
+      a = _mm_xor_si128(a, _mm_slli_si128(a, 4));
+      a = _mm_xor_si128(a, _mm_slli_si128(a, 4));
+      a = _mm_xor_si128(a, _mm_slli_si128(a, 4));
+      a = _mm_xor_si128(a, _mm_shuffle_epi32(b, 0xff));
+      return a;
+    };
 
-		w[0] = _mm_loadu_si128(reinterpret_cast<const __m128i*>(key));
-		w[1] = assist(w[0], _mm_aeskeygenassist_si128(w[0], 0x01));
-		w[2] = assist(w[1], _mm_aeskeygenassist_si128(w[1], 0x02));
-		w[3] = assist(w[2], _mm_aeskeygenassist_si128(w[2], 0x04));
-		w[4] = assist(w[3], _mm_aeskeygenassist_si128(w[3], 0x08));
-		w[5] = assist(w[4], _mm_aeskeygenassist_si128(w[4], 0x10));
-		w[6] = assist(w[5], _mm_aeskeygenassist_si128(w[5], 0x20));
-		w[7] = assist(w[6], _mm_aeskeygenassist_si128(w[6], 0x40));
-		w[8] = assist(w[7], _mm_aeskeygenassist_si128(w[7], 0x80));
-		w[9] = assist(w[8], _mm_aeskeygenassist_si128(w[8], 0x1b));
-		w[10] = assist(w[9], _mm_aeskeygenassist_si128(w[9], 0x36));
-	}
+    w[0] = _mm_loadu_si128(reinterpret_cast<const __m128i *>(key));
+    w[1] = assist(w[0], _mm_aeskeygenassist_si128(w[0], 0x01));
+    w[2] = assist(w[1], _mm_aeskeygenassist_si128(w[1], 0x02));
+    w[3] = assist(w[2], _mm_aeskeygenassist_si128(w[2], 0x04));
+    w[4] = assist(w[3], _mm_aeskeygenassist_si128(w[3], 0x08));
+    w[5] = assist(w[4], _mm_aeskeygenassist_si128(w[4], 0x10));
+    w[6] = assist(w[5], _mm_aeskeygenassist_si128(w[5], 0x20));
+    w[7] = assist(w[6], _mm_aeskeygenassist_si128(w[6], 0x40));
+    w[8] = assist(w[7], _mm_aeskeygenassist_si128(w[7], 0x80));
+    w[9] = assist(w[8], _mm_aeskeygenassist_si128(w[8], 0x1b));
+    w[10] = assist(w[9], _mm_aeskeygenassist_si128(w[9], 0x36));
+  }
 };
-template <> struct aesN<192>
-{
-	enum { Nk = 6, Nr = 12 };
+template <> struct aesN<192> {
+  enum { Nk = 6, Nr = 12 };
 
-	static void keyExpansion(const uint8_t* key, __m128i* w)
-	{
-		auto assist = [](__m128i& a, __m128i& b, const __m128i& c)
-		{
-			a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
-			a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
-			a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
-			a = _mm_xor_si128(a, _mm_shuffle_epi32(c, 0x55));
-			b = _mm_xor_si128(b, _mm_slli_si128(b, 0x4));
-			b = _mm_xor_si128(b, _mm_shuffle_epi32(a, 0xff));
-		};
+  static void keyExpansion(const uint8_t *key, __m128i *w) {
+    auto assist = [](__m128i &a, __m128i &b, const __m128i &c) {
+      a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
+      a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
+      a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
+      a = _mm_xor_si128(a, _mm_shuffle_epi32(c, 0x55));
+      b = _mm_xor_si128(b, _mm_slli_si128(b, 0x4));
+      b = _mm_xor_si128(b, _mm_shuffle_epi32(a, 0xff));
+    };
 
-		__m128i a, b;
+    __m128i a, b;
 
-		w[0] = a = _mm_loadu_si128(reinterpret_cast<const __m128i*>(key));
-		w[1] = b = _mm_loadu_si128(reinterpret_cast<const __m128i*>(key + 16));
+    w[0] = a = _mm_loadu_si128(reinterpret_cast<const __m128i *>(key));
+    w[1] = b = _mm_loadu_si128(reinterpret_cast<const __m128i *>(key + 16));
 
-		assist(a, b, _mm_aeskeygenassist_si128(b, 0x1));
-		w[1] = _mm_castpd_si128(_mm_shuffle_pd(_mm_castsi128_pd(w[1]), _mm_castsi128_pd(a), 0));
-		w[2] = _mm_castpd_si128(_mm_shuffle_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b), 1));
+    assist(a, b, _mm_aeskeygenassist_si128(b, 0x1));
+    w[1] = _mm_castpd_si128(
+        _mm_shuffle_pd(_mm_castsi128_pd(w[1]), _mm_castsi128_pd(a), 0));
+    w[2] = _mm_castpd_si128(
+        _mm_shuffle_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b), 1));
 
-		assist(a, b, _mm_aeskeygenassist_si128(b, 0x2));
-		w[3] = a;
-		w[4] = b;
+    assist(a, b, _mm_aeskeygenassist_si128(b, 0x2));
+    w[3] = a;
+    w[4] = b;
 
-		assist(a, b, _mm_aeskeygenassist_si128(b, 0x4));
-		w[4] = _mm_castpd_si128(_mm_shuffle_pd(_mm_castsi128_pd(w[4]), _mm_castsi128_pd(a), 0));
-		w[5] = _mm_castpd_si128(_mm_shuffle_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b), 1));
+    assist(a, b, _mm_aeskeygenassist_si128(b, 0x4));
+    w[4] = _mm_castpd_si128(
+        _mm_shuffle_pd(_mm_castsi128_pd(w[4]), _mm_castsi128_pd(a), 0));
+    w[5] = _mm_castpd_si128(
+        _mm_shuffle_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b), 1));
 
-		assist(a, b, _mm_aeskeygenassist_si128(b, 0x8));
-		w[6] = a;
-		w[7] = b;
+    assist(a, b, _mm_aeskeygenassist_si128(b, 0x8));
+    w[6] = a;
+    w[7] = b;
 
-		assist(a, b, _mm_aeskeygenassist_si128(b, 0x10));
-		w[7] = _mm_castpd_si128(_mm_shuffle_pd(_mm_castsi128_pd(w[7]), _mm_castsi128_pd(a), 0));
-		w[8] = _mm_castpd_si128(_mm_shuffle_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b), 1));
+    assist(a, b, _mm_aeskeygenassist_si128(b, 0x10));
+    w[7] = _mm_castpd_si128(
+        _mm_shuffle_pd(_mm_castsi128_pd(w[7]), _mm_castsi128_pd(a), 0));
+    w[8] = _mm_castpd_si128(
+        _mm_shuffle_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b), 1));
 
-		assist(a, b, _mm_aeskeygenassist_si128(b, 0x20));
-		w[9] = a;
-		w[10] = b;
+    assist(a, b, _mm_aeskeygenassist_si128(b, 0x20));
+    w[9] = a;
+    w[10] = b;
 
-		assist(a, b, _mm_aeskeygenassist_si128(b, 0x40));
-		w[10] = _mm_castpd_si128(_mm_shuffle_pd(_mm_castsi128_pd(w[10]), _mm_castsi128_pd(a), 0));
-		w[11] = _mm_castpd_si128(_mm_shuffle_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b), 1));
+    assist(a, b, _mm_aeskeygenassist_si128(b, 0x40));
+    w[10] = _mm_castpd_si128(
+        _mm_shuffle_pd(_mm_castsi128_pd(w[10]), _mm_castsi128_pd(a), 0));
+    w[11] = _mm_castpd_si128(
+        _mm_shuffle_pd(_mm_castsi128_pd(a), _mm_castsi128_pd(b), 1));
 
-		assist(a, b, _mm_aeskeygenassist_si128(b, 0x80));
-		w[12] = a;
-	}
+    assist(a, b, _mm_aeskeygenassist_si128(b, 0x80));
+    w[12] = a;
+  }
 };
-template <> struct aesN<256>
-{
-	enum { Nk = 8, Nr = 14 };
+template <> struct aesN<256> {
+  enum { Nk = 8, Nr = 14 };
 
-	static void keyExpansion(const uint8_t* key, __m128i* w)
-	{
-		auto assistL = [](__m128i a, const __m128i& b)
-		{
-			a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
-			a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
-			a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
-			a = _mm_xor_si128(a, _mm_shuffle_epi32(b, 0xff));
-			return a;
-		};
-		auto assistH = [](const __m128i& a, __m128i c)
-		{
-			c = _mm_xor_si128(c, _mm_slli_si128(c, 0x4));
-			c = _mm_xor_si128(c, _mm_slli_si128(c, 0x4));
-			c = _mm_xor_si128(c, _mm_slli_si128(c, 0x4));
-			c = _mm_xor_si128(c, _mm_shuffle_epi32(_mm_aeskeygenassist_si128(a, 0x0), 0xaa));
-			return c;
-		};
+  static void keyExpansion(const uint8_t *key, __m128i *w) {
+    auto assistL = [](__m128i a, const __m128i &b) {
+      a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
+      a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
+      a = _mm_xor_si128(a, _mm_slli_si128(a, 0x4));
+      a = _mm_xor_si128(a, _mm_shuffle_epi32(b, 0xff));
+      return a;
+    };
+    auto assistH = [](const __m128i &a, __m128i c) {
+      c = _mm_xor_si128(c, _mm_slli_si128(c, 0x4));
+      c = _mm_xor_si128(c, _mm_slli_si128(c, 0x4));
+      c = _mm_xor_si128(c, _mm_slli_si128(c, 0x4));
+      c = _mm_xor_si128(
+          c, _mm_shuffle_epi32(_mm_aeskeygenassist_si128(a, 0x0), 0xaa));
+      return c;
+    };
 
-		w[0] = _mm_loadu_si128(reinterpret_cast<const __m128i*>(key));
-		w[1] = _mm_loadu_si128(reinterpret_cast<const __m128i*>(key + 16));
-		w[2] = assistL(w[0], _mm_aeskeygenassist_si128(w[1], 0x1));
-		w[3] = assistH(w[2], w[1]);
-		w[4] = assistL(w[2], _mm_aeskeygenassist_si128(w[3], 0x2));
-		w[5] = assistH(w[4], w[3]);
-		w[6] = assistL(w[4], _mm_aeskeygenassist_si128(w[5], 0x4));
-		w[7] = assistH(w[6], w[5]);
-		w[8] = assistL(w[6], _mm_aeskeygenassist_si128(w[7], 0x8));
-		w[9] = assistH(w[8], w[7]);
-		w[10] = assistL(w[8], _mm_aeskeygenassist_si128(w[9], 0x10));
-		w[11] = assistH(w[10], w[9]);
-		w[12] = assistL(w[10], _mm_aeskeygenassist_si128(w[11], 0x20));
-		w[13] = assistH(w[12], w[11]);
-		w[14] = assistL(w[12], _mm_aeskeygenassist_si128(w[13], 0x40));
-	}
+    w[0] = _mm_loadu_si128(reinterpret_cast<const __m128i *>(key));
+    w[1] = _mm_loadu_si128(reinterpret_cast<const __m128i *>(key + 16));
+    w[2] = assistL(w[0], _mm_aeskeygenassist_si128(w[1], 0x1));
+    w[3] = assistH(w[2], w[1]);
+    w[4] = assistL(w[2], _mm_aeskeygenassist_si128(w[3], 0x2));
+    w[5] = assistH(w[4], w[3]);
+    w[6] = assistL(w[4], _mm_aeskeygenassist_si128(w[5], 0x4));
+    w[7] = assistH(w[6], w[5]);
+    w[8] = assistL(w[6], _mm_aeskeygenassist_si128(w[7], 0x8));
+    w[9] = assistH(w[8], w[7]);
+    w[10] = assistL(w[8], _mm_aeskeygenassist_si128(w[9], 0x10));
+    w[11] = assistH(w[10], w[9]);
+    w[12] = assistL(w[10], _mm_aeskeygenassist_si128(w[11], 0x20));
+    w[13] = assistH(w[12], w[11]);
+    w[14] = assistL(w[12], _mm_aeskeygenassist_si128(w[13], 0x40));
+  }
 };
 
-template <int N>
-class CWAes
-{
+template <int N> class CWAes {
 public:
-	// If |iv| is null, mode is ECB; |iv| not be null, mode is CBC; if it is CTR, after set counter.
-	// CTR mode must be NonePadding!
-	CWAes(const void* key, size_t keyLength, const void *iv = nullptr, size_t ivLength = 16, Padding padding = Padding::PKCS7)
-		: m_padding(padding), m_mode(Mode::ECB)
-	{
-		if (keyLength < 4 * Nk)// key padding zero
-		{
-			uint8_t tk[4 * Nk] = {};
+  // If |iv| is null, mode is ECB; |iv| not be null, mode is CBC; if it is CTR,
+  // after set counter. CTR mode must be NonePadding!
+  CWAes(const void *key, size_t keyLength, const void *iv = nullptr,
+        size_t ivLength = 16, Padding padding = Padding::PKCS7)
+      : m_padding(padding), m_mode(Mode::ECB) {
+    // Preserve legacy zero-padding/truncation while giving the AES-192
+    // expansion two complete, readable SIMD blocks.
+    alignas(16) uint8_t normalizedKey[32] = {};
+    const size_t normalizedLength = keyLength > 4 * Nk ? 4 * Nk : keyLength;
+    if (normalizedLength)
+      memcpy(normalizedKey, key, normalizedLength);
+    aesN<N>::keyExpansion(normalizedKey, m_w);
 
-			memcpy(tk, key, keyLength);
+    // imc
+    for (uint8_t i = Nr + 1; i < Nr * 2; ++i) {
+      m_w[i] = _mm_aesimc_si128(m_w[Nr * 2 - i]);
+    }
 
-			aesN<N>::keyExpansion(tk, m_w);
-		}
-		else
-		{
-			aesN<N>::keyExpansion(reinterpret_cast<const uint8_t*>(key), m_w);
-		}
+    if (iv) // iv padding zero
+    {
+      m_mode = Mode::CBC;
+      memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
+    }
+  }
 
-		// imc
-		for (uint8_t i = Nr + 1; i < Nr * 2; ++i)
-		{
-			m_w[i] = _mm_aesimc_si128(m_w[Nr * 2 - i]);
-		}
+  ~CWAes() = default;
 
-		if (iv)// iv padding zero
-		{
-			m_mode = Mode::CBC;
-			memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
-		}
-	}
+  size_t SumCipherLength(size_t nInLen) const {
+    constexpr size_t blockSize = Nb * 4;
+    if (m_mode == Mode::CTR) {
+      // In CTR mode, the length is not padded.
+      return nInLen;
+    } else if (m_padding == Padding::Zeros) {
+      return ((nInLen + blockSize - 1) / blockSize) * blockSize;
+    } else { // PKCS7
+      return ((nInLen / blockSize) + 1) * blockSize;
+    }
+  }
 
-	~CWAes() = default;
+  // Sets the counter value when in CBC mode.
+  // The maximum length is 16 byte, if not enough padding zero.
+  void SetIV(const void *iv, size_t length) {
+    m_mode = Mode::CBC;
+    memset(&m_iv, 0, sizeof(m_iv));
+    memcpy(&m_iv, iv, length > 16 ? 16 : length);
+  }
 
-	size_t SumCipherLength(size_t nInLen) const {
-		constexpr size_t blockSize = Nb * 4;
-		if (m_mode == Mode::CTR) {
-		  // In CTR mode, the length is not padded.
-		  return nInLen;
-		} else if (m_padding == Padding::Zeros) {
-		  return ((nInLen + blockSize - 1) / blockSize) * blockSize;
-		} else {  // PKCS7
-		  return ((nInLen / blockSize) + 1) * blockSize;
-		}
-	}
+  // Sets the counter value when in CTR mode.
+  // The maximum length is 16 byte, if not enough padding zero.
+  void SetCounter(const void *counter, size_t length) {
+    m_mode = Mode::CTR;
+    memset(&m_iv, 0, sizeof(m_iv));
+    memcpy(&m_iv, counter, length > 16 ? 16 : length);
+  }
 
-	// Sets the counter value when in CBC mode. 
-	// The maximum length is 16 byte, if not enough padding zero.
-	void SetIV(const void *iv, size_t length)
-	{
-		m_mode = Mode::CBC;
-		memset(&m_iv, 0, sizeof(m_iv));
-		memcpy(&m_iv, iv, length > 16 ? 16 : length);
-	}
+  bool Cipher(const void *in, size_t inLength, void *out,
+              size_t &outLength) const {
+    switch (m_mode) {
+    case Mode::ECB:
+      return cipherECB(in, inLength, out, outLength);
+    case Mode::CBC:
+      return cipherCBC(in, inLength, out, outLength);
+    case Mode::CTR:
+      return cipherCTR(in, inLength, out, outLength);
+    }
 
-	// Sets the counter value when in CTR mode. 
-	// The maximum length is 16 byte, if not enough padding zero.
-	void SetCounter(const void *counter, size_t length)
-	{
-		m_mode = Mode::CTR;
-		memset(&m_iv, 0, sizeof(m_iv));
-		memcpy(&m_iv, counter, length > 16 ? 16 : length);
-	}
+    return false;
+  }
 
-	bool Cipher(const void *in, size_t inLength, void *out, size_t& outLength) const
-	{
-		switch (m_mode)
-		{
-		case Mode::ECB:
-			return cipherECB(in, inLength, out, outLength);
-		case Mode::CBC:
-			return cipherCBC(in, inLength, out, outLength);
-		case Mode::CTR:
-			return cipherCTR(in, inLength, out, outLength);
-		}
+  bool InvCipher(const void *in, size_t inLength, void *out,
+                 size_t &outLength) const {
+    switch (m_mode) {
+    case Mode::ECB:
+      return invCipherECB(in, inLength, out, outLength);
+    case Mode::CBC:
+      return invCipherCBC(in, inLength, out, outLength);
+    case Mode::CTR:
+      return cipherCTR(in, inLength, out, outLength);
+    }
 
-		return false;
-	}
-
-	bool InvCipher(const void *in, size_t inLength, void *out, size_t& outLength) const
-	{
-		switch (m_mode)
-		{
-		case Mode::ECB:
-			return invCipherECB(in, inLength, out, outLength);
-		case Mode::CBC:
-			return invCipherCBC(in, inLength, out, outLength);
-		case Mode::CTR:
-			return cipherCTR(in, inLength, out, outLength);
-		}
-
-		return false;
-	}
+    return false;
+  }
 
 private:
-	enum {
-		Nb = 4,
-		Nk = aesN<N>::Nk,
-		Nr = aesN<N>::Nr,
-	};
+  enum {
+    Nb = 4,
+    Nk = aesN<N>::Nk,
+    Nr = aesN<N>::Nr,
+  };
 
-	enum class Mode
-	{
-		ECB,
-		CBC,
-		CTR,
-	};
-	__m128i m_w[Nr * 2];
-	__m128i m_iv = {};
-	Padding m_padding;
-	Mode m_mode;
+  enum class Mode {
+    ECB,
+    CBC,
+    CTR,
+  };
+  __m128i m_w[Nr * 2];
+  __m128i m_iv = {};
+  Padding m_padding;
+  Mode m_mode;
 
-	void cipher(__m128i& state) const
-	{
-		state = _mm_xor_si128(state, m_w[0]);
+  void cipher(__m128i &state) const {
+    state = _mm_xor_si128(state, m_w[0]);
 
-		for (uint8_t r = 1; r < Nr; ++r)
-		{
-			state = _mm_aesenc_si128(state, m_w[r]);
-		}
+    for (uint8_t r = 1; r < Nr; ++r) {
+      state = _mm_aesenc_si128(state, m_w[r]);
+    }
 
-		state = _mm_aesenclast_si128(state, m_w[Nr]);
-	}
+    state = _mm_aesenclast_si128(state, m_w[Nr]);
+  }
 
-	void invCipher(__m128i& state) const
-	{
-		state = _mm_xor_si128(state, m_w[Nr]);
+  void invCipher(__m128i &state) const {
+    state = _mm_xor_si128(state, m_w[Nr]);
 
-		for (uint8_t r = Nr + 1; r < Nr * 2; ++r)
-		{
-			state = _mm_aesdec_si128(state, m_w[r]);
-		}
+    for (uint8_t r = Nr + 1; r < Nr * 2; ++r) {
+      state = _mm_aesdec_si128(state, m_w[r]);
+    }
 
-		state = _mm_aesdeclast_si128(state, m_w[0]);
-	}
+    state = _mm_aesdeclast_si128(state, m_w[0]);
+  }
 
-	bool isValidPKCS7Padding(const __m128i &state) const
-	{
-		auto* pos = reinterpret_cast<const uint8_t*>(&state);
-		if (pos[15] > 16 || pos[15] == 0)
-			return false;
+  bool isValidPKCS7Padding(const __m128i &state) const {
+    auto *pos = reinterpret_cast<const uint8_t *>(&state);
+    if (pos[15] > 16 || pos[15] == 0)
+      return false;
 
-		for (int8_t i = 16 - pos[15]; i < 15; ++i)
-		{
-			if (pos[15] != pos[i]) return false;
-		}
+    for (int8_t i = 16 - pos[15]; i < 15; ++i) {
+      if (pos[15] != pos[i])
+        return false;
+    }
 
-		return true;
-	}
+    return true;
+  }
 
-	bool cipherECB(const void* in, size_t inLength, void* out, size_t& outLength) const
-	{
-		auto nNeedLen = SumCipherLength(inLength);
-		if (outLength < nNeedLen)
-		{
-			return false;
-		}
+  bool cipherECB(const void *in, size_t inLength, void *out,
+                 size_t &outLength) const {
+    auto nNeedLen = SumCipherLength(inLength);
+    if (outLength < nNeedLen) {
+      return false;
+    }
 
-		__m128i state;
-		auto len = inLength;
-		auto input = reinterpret_cast<const __m128i*>(in);
-		auto output = reinterpret_cast<__m128i*>(out);
-		for (; len >= 16; len -= 16, ++input, ++output)
-		{
-			state = _mm_loadu_si128(input);
-			cipher(state);
-			_mm_storeu_si128(output, state);
-		}
+    __m128i state;
+    auto len = inLength;
+    auto input = reinterpret_cast<const __m128i *>(in);
+    auto output = reinterpret_cast<__m128i *>(out);
+    for (; len >= 16; len -= 16, ++input, ++output) {
+      state = _mm_loadu_si128(input);
+      cipher(state);
+      _mm_storeu_si128(output, state);
+    }
 
-		// Padding
-		if (len || Padding::PKCS7 == m_padding)
-		{
-			state = _mm_loadu_si128(input);
-			auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<int>(len);
-			memset(reinterpret_cast<uint8_t*>(&state) + len, pad, 16 - len);
+    // Padding
+    if (len || Padding::PKCS7 == m_padding) {
+      alignas(16) uint8_t block[16] = {};
+      if (len)
+        memcpy(block, input, len);
+      auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<int>(len);
+      memset(block + len, pad, 16 - len);
+      state = _mm_load_si128(reinterpret_cast<const __m128i *>(block));
 
-			cipher(state);
-			_mm_storeu_si128(output, state);
-		}
+      cipher(state);
+      _mm_storeu_si128(output, state);
+    }
 
-		outLength = nNeedLen;
-		return true;
-	}
+    outLength = nNeedLen;
+    return true;
+  }
 
-	bool cipherCBC(const void* in, size_t inLength, void* out, size_t& outLength) const
-	{
-		auto nNeedLen = SumCipherLength(inLength);
-		if (outLength < nNeedLen)
-		{
-			return false;
-		}
+  bool cipherCBC(const void *in, size_t inLength, void *out,
+                 size_t &outLength) const {
+    auto nNeedLen = SumCipherLength(inLength);
+    if (outLength < nNeedLen) {
+      return false;
+    }
 
-		auto len = inLength;
-		auto input = reinterpret_cast<const __m128i*>(in);
-		auto output = reinterpret_cast<__m128i*>(out);
+    auto len = inLength;
+    auto input = reinterpret_cast<const __m128i *>(in);
+    auto output = reinterpret_cast<__m128i *>(out);
 
-		auto state = m_iv;
-		for (; len >= 16; len -= 16, ++input, ++output)
-		{
-			state = _mm_xor_si128(_mm_loadu_si128(input), state);
-			cipher(state);
-			_mm_storeu_si128(output, state);
-		}
+    auto state = m_iv;
+    for (; len >= 16; len -= 16, ++input, ++output) {
+      state = _mm_xor_si128(_mm_loadu_si128(input), state);
+      cipher(state);
+      _mm_storeu_si128(output, state);
+    }
 
-		// Padding
-		if (len || Padding::PKCS7 == m_padding)
-		{
-			for (uint8_t i = 0; i < len; ++i)
-			{
-				reinterpret_cast<uint8_t*>(&state)[i] ^= reinterpret_cast<const uint8_t*>(input)[i];
-			}
-			if (Padding::PKCS7 == m_padding)
-			{
-				for (auto i = len; i < 16; ++i)
-				{
-					reinterpret_cast<uint8_t*>(&state)[i] ^= 16 - len;
-				}
-			}
+    // Padding
+    if (len || Padding::PKCS7 == m_padding) {
+      for (uint8_t i = 0; i < len; ++i) {
+        reinterpret_cast<uint8_t *>(&state)[i] ^=
+            reinterpret_cast<const uint8_t *>(input)[i];
+      }
+      if (Padding::PKCS7 == m_padding) {
+        for (auto i = len; i < 16; ++i) {
+          reinterpret_cast<uint8_t *>(&state)[i] ^= 16 - len;
+        }
+      }
 
-			cipher(state);
-			_mm_storeu_si128(output, state);
-		}
+      cipher(state);
+      _mm_storeu_si128(output, state);
+    }
 
-		outLength = nNeedLen;
-		return true;
-	}
+    outLength = nNeedLen;
+    return true;
+  }
 
-	bool cipherCTR(const void* in, size_t inLength, void* out, size_t& outLength) const
-	{
-		if (outLength < inLength)
-		{
-			return false;
-		}
+  bool cipherCTR(const void *in, size_t inLength, void *out,
+                 size_t &outLength) const {
+    if (outLength < inLength) {
+      return false;
+    }
 
-		static const auto one = _mm_set_epi32(0, 1, 0, 0);
-		static const auto bswap_epi64 = _mm_setr_epi8(
-			7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
+    static const auto one = _mm_set_epi32(0, 1, 0, 0);
+    static const auto bswap_epi64 =
+        _mm_setr_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
 
-		auto counter = _mm_shuffle_epi8(m_iv, bswap_epi64);
+    auto counter = _mm_shuffle_epi8(m_iv, bswap_epi64);
 
-		int64_t len = inLength;
-		auto input = reinterpret_cast<const __m128i*>(in);
-		auto output = reinterpret_cast<__m128i*>(out);
-		for (; len >= 16; len -= 16, ++input, ++output)
-		{
-			auto state = _mm_shuffle_epi8(counter, bswap_epi64);
-			cipher(state);
-			_mm_storeu_si128(output, _mm_xor_si128(_mm_loadu_si128(input), state));
+    int64_t len = inLength;
+    auto input = reinterpret_cast<const __m128i *>(in);
+    auto output = reinterpret_cast<__m128i *>(out);
+    for (; len >= 16; len -= 16, ++input, ++output) {
+      auto state = _mm_shuffle_epi8(counter, bswap_epi64);
+      cipher(state);
+      _mm_storeu_si128(output, _mm_xor_si128(_mm_loadu_si128(input), state));
 
-			counter = _mm_add_epi64(counter, one);
-		}
+      counter = _mm_add_epi64(counter, one);
+    }
 
-		if (len)
-		{
-			auto state = _mm_shuffle_epi8(counter, bswap_epi64);
-			cipher(state);
-			for (int8_t i = 0; i < len; ++i)
-			{
-				reinterpret_cast<uint8_t*>(output)[i] = reinterpret_cast<const uint8_t*>(input)[i] ^ reinterpret_cast<uint8_t*>(&state)[i];
-			}
-		}
+    if (len) {
+      auto state = _mm_shuffle_epi8(counter, bswap_epi64);
+      cipher(state);
+      for (int8_t i = 0; i < len; ++i) {
+        reinterpret_cast<uint8_t *>(output)[i] =
+            reinterpret_cast<const uint8_t *>(input)[i] ^
+            reinterpret_cast<uint8_t *>(&state)[i];
+      }
+    }
 
-		outLength = inLength;
-		return true;
-	}
+    outLength = inLength;
+    return true;
+  }
 
-	bool invCipherECB(const void* in, size_t inLength, void* out, size_t& outLength) const
-	{
-		if (!inLength || inLength % 16)// invalid data length
-		{
-			return false;
-		}
+  bool invCipherECB(const void *in, size_t inLength, void *out,
+                    size_t &outLength) const {
+    if (!inLength || inLength % 16) // invalid data length
+    {
+      return false;
+    }
 
-		auto len = static_cast<int64_t>(inLength / 16) - 1;
-		auto input = reinterpret_cast<const __m128i*>(in);
+    auto len = static_cast<int64_t>(inLength / 16) - 1;
+    auto input = reinterpret_cast<const __m128i *>(in);
 
-		// sum padding length
-		auto state = _mm_loadu_si128(input + len);
-		invCipher(state);
+    // sum padding length
+    auto state = _mm_loadu_si128(input + len);
+    invCipher(state);
 
-		uint8_t padLen = 0;
-		if (Padding::Zeros == m_padding)
-		{
-			for (int8_t i = 15; i >= 0; --i, ++padLen)
-			{
-				if (reinterpret_cast<uint8_t*>(&state)[i]) break;
-			}
-		}
-		else
-		{
-			if (!isValidPKCS7Padding(state))
-			{
-				return false;
-			}
-			padLen = reinterpret_cast<uint8_t*>(&state)[15];
-		}
+    uint8_t padLen = 0;
+    if (Padding::Zeros == m_padding) {
+      for (int8_t i = 15; i >= 0; --i, ++padLen) {
+        if (reinterpret_cast<uint8_t *>(&state)[i])
+          break;
+      }
+    } else {
+      if (!isValidPKCS7Padding(state)) {
+        return false;
+      }
+      padLen = reinterpret_cast<uint8_t *>(&state)[15];
+    }
 
-		if (outLength < inLength - padLen)
-		{
-			// out buffer too small
-			return false;
-		}
+    if (outLength < inLength - padLen) {
+      // out buffer too small
+      return false;
+    }
 
-		outLength = inLength - padLen;
-		uint8_t endLen = padLen ? outLength % 16 : 16;
-		auto output = reinterpret_cast<__m128i*>(out);
-		memcpy(output + len, &state, endLen);
+    outLength = inLength - padLen;
+    uint8_t endLen = padLen ? outLength % 16 : 16;
+    auto output = reinterpret_cast<__m128i *>(out);
+    memcpy(output + len, &state, endLen);
 
-		for (int i = 0; i < len; ++i, ++input, ++output)
-		{
-			state = _mm_loadu_si128(input);
-			invCipher(state);
-			_mm_storeu_si128(output, state);
-		}
+    for (int i = 0; i < len; ++i, ++input, ++output) {
+      state = _mm_loadu_si128(input);
+      invCipher(state);
+      _mm_storeu_si128(output, state);
+    }
 
-		return true;
-	}
+    return true;
+  }
 
-	bool invCipherCBC(const void* in, size_t inLength, void* out, size_t& outLength) const
-	{
-		if (!inLength || inLength % 16)// invalid data length
-		{
-			return false;
-		}
+  bool invCipherCBC(const void *in, size_t inLength, void *out,
+                    size_t &outLength) const {
+    if (!inLength || inLength % 16) // invalid data length
+    {
+      return false;
+    }
 
-		auto len = static_cast<int64_t>(inLength / 16) - 1;
-		auto input = reinterpret_cast<const __m128i*>(in);
+    auto len = static_cast<int64_t>(inLength / 16) - 1;
+    auto input = reinterpret_cast<const __m128i *>(in);
 
-		// sum padding length
-		auto state = _mm_loadu_si128(reinterpret_cast<const __m128i*>(input + len));
-		invCipher(state);
+    // sum padding length
+    auto state =
+        _mm_loadu_si128(reinterpret_cast<const __m128i *>(input + len));
+    invCipher(state);
 
-		__m128i iv;
-		if (len)
-		{
-			iv = _mm_loadu_si128(reinterpret_cast<const __m128i*>(input + len - 1));
-		}
-		else
-		{
-			iv = m_iv;
-		}
-		state = _mm_xor_si128(state, iv);
+    __m128i iv;
+    if (len) {
+      iv = _mm_loadu_si128(reinterpret_cast<const __m128i *>(input + len - 1));
+    } else {
+      iv = m_iv;
+    }
+    state = _mm_xor_si128(state, iv);
 
-		uint8_t padLen = 0;
-		if (Padding::Zeros == m_padding)
-		{
-			for (int8_t i = 15; i >= 0; --i, ++padLen)
-			{
-				if (reinterpret_cast<uint8_t*>(&state)[i]) break;
-			}
-		}
-		else
-		{
-			if (!isValidPKCS7Padding(state))
-			{
-				return false;
-			}
-			padLen = reinterpret_cast<uint8_t*>(&state)[15];
-		}
+    uint8_t padLen = 0;
+    if (Padding::Zeros == m_padding) {
+      for (int8_t i = 15; i >= 0; --i, ++padLen) {
+        if (reinterpret_cast<uint8_t *>(&state)[i])
+          break;
+      }
+    } else {
+      if (!isValidPKCS7Padding(state)) {
+        return false;
+      }
+      padLen = reinterpret_cast<uint8_t *>(&state)[15];
+    }
 
-		if (outLength < inLength - padLen)
-		{
-			// out buffer too small
-			return false;
-		}
+    if (outLength < inLength - padLen) {
+      // out buffer too small
+      return false;
+    }
 
-		outLength = inLength - padLen;
-		uint8_t endLen = padLen ? outLength % 16 : 16;
-		auto output = reinterpret_cast<__m128i*>(out);
-		memcpy(output + len, &state, endLen);
+    outLength = inLength - padLen;
+    uint8_t endLen = padLen ? outLength % 16 : 16;
+    auto output = reinterpret_cast<__m128i *>(out);
+    memcpy(output + len, &state, endLen);
 
-		iv = m_iv;
-		for (int i = 0; i < len; ++i, ++input, ++output)
-		{
-			auto niv = state = _mm_loadu_si128(input);
-			invCipher(state);
-			_mm_storeu_si128(output, _mm_xor_si128(state, iv));
+    iv = m_iv;
+    for (int i = 0; i < len; ++i, ++input, ++output) {
+      auto niv = state = _mm_loadu_si128(input);
+      invCipher(state);
+      _mm_storeu_si128(output, _mm_xor_si128(state, iv));
 
-			iv = niv;
-		}
+      iv = niv;
+    }
 
-		return true;
-	}
+    return true;
+  }
 };
 
 using CWAes128 = CWAes<128>;

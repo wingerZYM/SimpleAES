@@ -1,6 +1,14 @@
 CXX = g++
-CXXFLAGS = -std=c++20 -O3 -march=native -Wall -Wextra
+CXXFLAGS = -std=c++20 -O3 -Wall -Wextra
 INCLUDES = -I..
+SHELL := /bin/bash
+.SHELLFLAGS := -o pipefail -c
+
+AESNI_FLAGS = -mssse3 -maes
+VAES_FLAGS = $(AESNI_FLAGS) -mavx2 -mvaes
+VAES512_FLAGS = $(VAES_FLAGS) -mavx512f -mavx512bw -mavx512dq -mavx512vl
+ARM_CRYPTO_FLAGS = -march=native
+SANITIZER_FLAGS = -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
 
 # Output directories
 OUTDIR = out
@@ -11,74 +19,57 @@ TIMESTAMP := $(shell date +%Y%m%d_%H%M%S)
 # Platform detection
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
+NATIVE_DEFINES := $(shell echo | $(CXX) -march=native -dM -E - 2>/dev/null)
 
-# Check for x86_64 and VAES support (requires AVX2 + VAES)
-ifeq ($(UNAME_M),x86_64)
+# Build each standalone implementation with only the flags that it requires.
+# The unified test uses the strongest backend executable on this machine.
+AES_NI_SUPPORT = no
+VAES_SUPPORT = no
+VAES512_SUPPORT = no
+ARM_CRYPTO_SUPPORT = no
+WAES_TARGET_FLAGS =
+TESTS = test_generic test_waes
+
+ifneq ($(filter x86_64 amd64,$(UNAME_M)),)
     PLATFORM = x86_64
-    VAES_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX2__" && echo | $(CXX) -march=native -dM -E - | grep -q "__VAES__" && echo "yes" || echo "no")
-    AES_NI_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AES__" && echo "yes" || echo "no")
-    # Check for AVX512F support for VAES512
-    VAES512_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX512F__" && echo | $(CXX) -march=native -dM -E - | grep -q "__VAES__" && echo "yes" || echo "no")
-    X86_TESTS = test_generic test_aes_ni test_waes
+    ifneq ($(findstring __AES__,$(NATIVE_DEFINES)),)
+        ifneq ($(findstring __SSSE3__,$(NATIVE_DEFINES)),)
+            AES_NI_SUPPORT = yes
+            TESTS += test_aes_ni
+            WAES_TARGET_FLAGS = $(AESNI_FLAGS)
+        endif
+    endif
+    ifneq ($(findstring __AVX2__,$(NATIVE_DEFINES)),)
+        ifneq ($(findstring __VAES__,$(NATIVE_DEFINES)),)
+            ifeq ($(AES_NI_SUPPORT),yes)
+                VAES_SUPPORT = yes
+                TESTS += test_vaes
+                WAES_TARGET_FLAGS = $(VAES_FLAGS)
+            endif
+        endif
+    endif
     ifeq ($(VAES_SUPPORT),yes)
-        X86_TESTS += test_vaes
-        CXXFLAGS += -DVAES_SUPPORTED
+        ifneq ($(findstring __AVX512F__,$(NATIVE_DEFINES)),)
+            ifneq ($(findstring __AVX512BW__,$(NATIVE_DEFINES)),)
+                ifneq ($(findstring __AVX512DQ__,$(NATIVE_DEFINES)),)
+                    ifneq ($(findstring __AVX512VL__,$(NATIVE_DEFINES)),)
+                        VAES512_SUPPORT = yes
+                        TESTS += test_vaes512
+                        WAES_TARGET_FLAGS = $(VAES512_FLAGS)
+                    endif
+                endif
+            endif
+        endif
     endif
-    ifeq ($(VAES512_SUPPORT),yes)
-        X86_TESTS += test_vaes512
-        CXXFLAGS += -DVAES512_SUPPORTED
-    endif
-    TESTS = $(X86_TESTS)
-else ifeq ($(UNAME_M),amd64)
-    # FreeBSD/Windows uses amd64 instead of x86_64
-    PLATFORM = x86_64
-    VAES_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX2__" && echo | $(CXX) -march=native -dM -E - | grep -q "__VAES__" && echo "yes" || echo "no")
-    AES_NI_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AES__" && echo "yes" || echo "no")
-    VAES512_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__AVX512F__" && echo | $(CXX) -march=native -dM -E - | grep -q "__VAES__" && echo "yes" || echo "no")
-    X86_TESTS = test_generic test_aes_ni test_waes
-    ifeq ($(VAES_SUPPORT),yes)
-        X86_TESTS += test_vaes
-        CXXFLAGS += -DVAES_SUPPORTED
-    endif
-    ifeq ($(VAES512_SUPPORT),yes)
-        X86_TESTS += test_vaes512
-        CXXFLAGS += -DVAES512_SUPPORTED
-    endif
-    TESTS = $(X86_TESTS)
-else ifeq ($(UNAME_M),aarch64)
-    # ARM64 Linux
+else ifneq ($(filter aarch64 arm64,$(UNAME_M)),)
     PLATFORM = arm64
-    ARM_CRYPTO_SUPPORT := $(shell echo | $(CXX) -march=native -dM -E - | grep -q "__ARM_FEATURE_CRYPTO" && echo "yes" || echo "no")
-    # x86-64 specific features not available on ARM64
-    VAES_SUPPORT = no
-    VAES512_SUPPORT = no
-    AES_NI_SUPPORT = no
-    ARM_TESTS = test_generic test_waes
-    ifeq ($(ARM_CRYPTO_SUPPORT),yes)
-        ARM_TESTS += test_armv8
-        CXXFLAGS += -DARM_CRYPTO_SUPPORTED
+    ifneq ($(findstring __ARM_FEATURE_CRYPTO,$(NATIVE_DEFINES)),)
+        ARM_CRYPTO_SUPPORT = yes
+        TESTS += test_armv8
+        WAES_TARGET_FLAGS = $(ARM_CRYPTO_FLAGS)
     endif
-    TESTS = $(ARM_TESTS)
-else ifeq ($(UNAME_M),arm64)
-    # ARM64 macOS
-    PLATFORM = arm64
-    # macOS ARM64 always has crypto extensions
-    ARM_CRYPTO_SUPPORT = yes
-    # x86-64 specific features not available on ARM64
-    VAES_SUPPORT = no
-    VAES512_SUPPORT = no
-    AES_NI_SUPPORT = no
-    ARM_TESTS = test_generic test_armv8 test_waes
-    CXXFLAGS += -DARM_CRYPTO_SUPPORTED
-    TESTS = $(ARM_TESTS)
 else
-    # Fallback to generic only
     PLATFORM = unknown
-    TESTS = test_generic test_waes
-    ARM_CRYPTO_SUPPORT = no
-    VAES_SUPPORT = no
-    VAES512_SUPPORT = no
-    AES_NI_SUPPORT = no
 endif
 
 # Full paths of test binaries (derived from TESTS list)
@@ -94,9 +85,10 @@ WAES_SRC = test_waes.cpp
 COMPARE_SRC = compare_implementations.cpp
 
 # Common dependencies
-COMMON_DEPS = test_data.hpp test_utils.hpp test_template.hpp
+COMMON_DEPS = test_data.hpp test_utils.hpp test_options.hpp test_known_answers.hpp test_template.hpp test_entry.hpp
+WAES_DEPS = test_waes_adapter.hpp test_waes_cross.hpp test_waes_regressions.hpp
 
-.PHONY: all clean check-platform run-all run-generic run-aes-ni run-vaes run-vaes512 run-armv8 run-waes cross-compare run-perf-all run-perf-generic run-perf-aes-ni run-perf-vaes run-perf-vaes512 run-perf-armv8 run-perf-waes compare cmp-specific report-generic report-aes-ni report-vaes report-vaes512 report-armv8 report-waes report-all
+.PHONY: all clean check-platform run-all run-generic run-aes-ni run-vaes run-vaes512 run-armv8 run-waes cross-compare run-perf-all run-perf-generic run-perf-aes-ni run-perf-vaes run-perf-vaes512 run-perf-armv8 run-perf-waes compare cmp-specific report-generic report-aes-ni report-vaes report-vaes512 report-armv8 report-waes report-all sanitize sanitize-generic sanitize-waes
 
 all: check-platform $(BINS)
 
@@ -135,17 +127,17 @@ $(BINDIR)/test_generic: $(GENERIC_SRC) $(COMMON_DEPS) ../WAes-gen.hpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(GENERIC_SRC)
 
 $(BINDIR)/test_aes_ni: $(AESNI_SRC) $(COMMON_DEPS) ../WAes-ni.hpp
-ifeq ($(PLATFORM),x86_64)
+ifeq ($(AES_NI_SUPPORT),yes)
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(AESNI_SRC)
+	$(CXX) $(CXXFLAGS) $(AESNI_FLAGS) $(INCLUDES) -o $@ $(AESNI_SRC)
 else
-	@echo "Skipping AES-NI test - not available on $(PLATFORM) platform"
+	@echo "Skipping AES-NI test - no AES-NI support detected"
 endif
 
 $(BINDIR)/test_vaes: $(VAES_SRC) $(COMMON_DEPS) ../WAes-vaes.hpp
 ifeq ($(VAES_SUPPORT),yes)
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(VAES_SRC)
+	$(CXX) $(CXXFLAGS) $(VAES_FLAGS) $(INCLUDES) -o $@ $(VAES_SRC)
 else
 	@echo "Skipping VAES test - no VAES support detected"
 endif
@@ -153,7 +145,7 @@ endif
 $(BINDIR)/test_vaes512: $(VAES512_SRC) $(COMMON_DEPS) ../WAes-vaes512.hpp
 ifeq ($(VAES512_SUPPORT),yes)
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(VAES512_SRC)
+	$(CXX) $(CXXFLAGS) $(VAES512_FLAGS) $(INCLUDES) -o $@ $(VAES512_SRC)
 else
 	@echo "Skipping VAES512 test - no VAES512 support detected"
 endif
@@ -162,7 +154,7 @@ $(BINDIR)/test_armv8: $(ARMV8_SRC) $(COMMON_DEPS) ../WAes-armv8.hpp
 ifeq ($(PLATFORM),arm64)
 ifeq ($(ARM_CRYPTO_SUPPORT),yes)
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) -march=armv8-a+crypto $(INCLUDES) -o $@ $(ARMV8_SRC)
+	$(CXX) $(CXXFLAGS) $(ARM_CRYPTO_FLAGS) $(INCLUDES) -o $@ $(ARMV8_SRC)
 else
 	@echo "Skipping ARMv8 test - no ARM crypto support detected"
 endif
@@ -170,13 +162,25 @@ else
 	@echo "Skipping ARMv8 test - not available on $(PLATFORM) platform"
 endif
 
-$(BINDIR)/test_waes: $(WAES_SRC) $(COMMON_DEPS) ../WAes.hpp
+$(BINDIR)/test_waes: $(WAES_SRC) $(COMMON_DEPS) $(WAES_DEPS) ../WAes.hpp
 	@mkdir -p $(BINDIR)
-ifeq ($(ARM_CRYPTO_SUPPORT),yes)
-	$(CXX) $(CXXFLAGS) -march=armv8-a+crypto $(INCLUDES) -o $@ $(WAES_SRC)
-else
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(WAES_SRC)
-endif
+	$(CXX) $(CXXFLAGS) $(WAES_TARGET_FLAGS) $(INCLUDES) -o $@ $(WAES_SRC)
+
+$(BINDIR)/test_generic_sanitize: $(GENERIC_SRC) $(COMMON_DEPS) ../WAes-gen.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(filter-out -O3,$(CXXFLAGS)) $(SANITIZER_FLAGS) $(INCLUDES) -o $@ $(GENERIC_SRC)
+
+$(BINDIR)/test_waes_sanitize: $(WAES_SRC) $(COMMON_DEPS) $(WAES_DEPS) ../WAes.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(filter-out -O3,$(CXXFLAGS)) $(SANITIZER_FLAGS) $(INCLUDES) -o $@ $(WAES_SRC)
+
+sanitize-generic: $(BINDIR)/test_generic_sanitize
+	./$(BINDIR)/test_generic_sanitize
+
+sanitize-waes: $(BINDIR)/test_waes_sanitize
+	./$(BINDIR)/test_waes_sanitize
+
+sanitize: sanitize-generic sanitize-waes
 
 # Build comparison tool
 compare: $(BINDIR)/compare-implementations
@@ -191,8 +195,12 @@ run-generic: $(BINDIR)/test_generic
 	./$(BINDIR)/test_generic
 
 run-aes-ni: $(BINDIR)/test_aes_ni
+ifeq ($(AES_NI_SUPPORT),yes)
 	@echo "=== Running AES-NI Implementation Tests ==="
 	./$(BINDIR)/test_aes_ni
+else
+	@echo "AES-NI tests not available - no AES-NI support detected"
+endif
 
 run-vaes: $(BINDIR)/test_vaes
 ifeq ($(VAES_SUPPORT),yes)
@@ -228,8 +236,12 @@ run-perf-generic: $(BINDIR)/test_generic
 	./$(BINDIR)/test_generic perf
 
 run-perf-aes-ni: $(BINDIR)/test_aes_ni
+ifeq ($(AES_NI_SUPPORT),yes)
 	@echo "=== Running AES-NI Performance Tests ==="
 	./$(BINDIR)/test_aes_ni perf
+else
+	@echo "AES-NI performance tests not available - no AES-NI support detected"
+endif
 
 run-perf-vaes: $(BINDIR)/test_vaes
 ifeq ($(VAES_SUPPORT),yes)
@@ -265,8 +277,10 @@ run-all: $(BINS)
 	@echo ""
 	@$(MAKE) run-generic
 	@echo ""
+ifeq ($(AES_NI_SUPPORT),yes)
 	@$(MAKE) run-aes-ni
 	@echo ""
+endif
 ifeq ($(VAES_SUPPORT),yes)
 	@$(MAKE) run-vaes
 	@echo ""
@@ -289,8 +303,10 @@ run-perf-all: $(BINS)
 	@echo ""
 	@$(MAKE) run-perf-generic
 	@echo ""
+ifeq ($(AES_NI_SUPPORT),yes)
 	@$(MAKE) run-perf-aes-ni
 	@echo ""
+endif
 ifeq ($(VAES_SUPPORT),yes)
 	@$(MAKE) run-perf-vaes
 	@echo ""
@@ -307,35 +323,38 @@ endif
 	@echo ""
 	@echo "=== All Performance Tests Completed ==="
 
-# Quick test with smaller dataset
+# Concise output, while still running each complete suite. pipefail preserves
+# the test executable's exit status through tail.
 quick-test: $(BINS)
 	@echo "=== Quick Test ==="
 	@echo "Testing Generic implementation..."
-	@./$(BINDIR)/test_generic | head -20
+	@./$(BINDIR)/test_generic | tail -8
 ifeq ($(PLATFORM),x86_64)
+ifeq ($(AES_NI_SUPPORT),yes)
 	@echo ""
 	@echo "Testing AES-NI implementation..."
-	@./$(BINDIR)/test_aes_ni | head -20
+	@./$(BINDIR)/test_aes_ni | tail -8
+endif
 ifeq ($(VAES_SUPPORT),yes)
 	@echo ""
 	@echo "Testing VAES implementation..."
-	@./$(BINDIR)/test_vaes | head -20
+	@./$(BINDIR)/test_vaes | tail -8
 endif
 ifeq ($(VAES512_SUPPORT),yes)
 	@echo ""
 	@echo "Testing VAES512 implementation..."
-	@./$(BINDIR)/test_vaes512 | head -20
+	@./$(BINDIR)/test_vaes512 | tail -8
 endif
 else ifeq ($(PLATFORM),arm64)
 ifeq ($(ARM_CRYPTO_SUPPORT),yes)
 	@echo ""
 	@echo "Testing ARMv8 implementation..."
-	@./$(BINDIR)/test_armv8 | head -20
+	@./$(BINDIR)/test_armv8 | tail -8
 endif
 endif
 	@echo ""
 	@echo "Testing Unified (WAes.hpp) implementation..."
-	@./$(BINDIR)/test_waes | head -20
+	@./$(BINDIR)/test_waes | tail -12
 
 # Cross-implementation comparison
 cross-compare: $(BINS) $(BINDIR)/compare-implementations
@@ -408,7 +427,9 @@ report-all: $(BINS)
 	@echo "=== Generating All Reports ==="
 	@$(MAKE) report-generic
 ifeq ($(PLATFORM),x86_64)
+ifeq ($(AES_NI_SUPPORT),yes)
 	@$(MAKE) report-aes-ni
+endif
 ifeq ($(VAES_SUPPORT),yes)
 	@$(MAKE) report-vaes
 endif
@@ -466,6 +487,9 @@ help:
 	@echo ""
 	@echo "Other:"
 	@echo "  quick-test        - Run quick test with limited output"
+	@echo "  sanitize          - Run Generic and baseline WAes with ASan/UBSan"
+	@echo "  sanitize-generic  - Run Generic with ASan/UBSan"
+	@echo "  sanitize-waes     - Run baseline WAes with ASan/UBSan"
 	@echo "  check-platform    - Check platform detection"
 	@echo "  clean             - Remove all build output (rm -rf $(OUTDIR))"
-	@echo "  help              - Show this help message" 
+	@echo "  help              - Show this help message"

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <memory.h>
 #include <cstdint>
+#include <memory.h>
 
 #include <arm_neon.h>
 
@@ -35,7 +35,8 @@ inline uint8x16_t _vzip_hi_lo64_u8(uint8x16_t a, uint8x16_t b) {
 // After ShiftRows: S(o13)@9, S(o14)@6, S(o15)@3, S(o12)@12
 inline uint8x16_t _vkeyassist_rot3(uint8x16_t a, const uint8_t rcon) {
   a = vaeseq_u8(a, vdupq_n_u8(0));
-  static const uint8_t idx[] = {9, 6, 3, 12, 9, 6, 3, 12, 9, 6, 3, 12, 9, 6, 3, 12};
+  static const uint8_t idx[] = {9, 6, 3, 12, 9, 6, 3, 12,
+                                9, 6, 3, 12, 9, 6, 3, 12};
   a = vqtbl1q_u8(a, vld1q_u8(idx));
   uint8x16_t rv = vdupq_n_u8(0);
   rv = vsetq_lane_u8(rcon, rv, 0);
@@ -49,7 +50,8 @@ inline uint8x16_t _vkeyassist_rot3(uint8x16_t a, const uint8_t rcon) {
 // After ShiftRows: S(o5)@1, S(o6)@14, S(o7)@11, S(o4)@4
 inline uint8x16_t _vkeyassist_rot1(uint8x16_t a, const uint8_t rcon) {
   a = vaeseq_u8(a, vdupq_n_u8(0));
-  static const uint8_t idx[] = {1, 14, 11, 4, 1, 14, 11, 4, 1, 14, 11, 4, 1, 14, 11, 4};
+  static const uint8_t idx[] = {1, 14, 11, 4, 1, 14, 11, 4,
+                                1, 14, 11, 4, 1, 14, 11, 4};
   a = vqtbl1q_u8(a, vld1q_u8(idx));
   uint8x16_t rv = vdupq_n_u8(0);
   rv = vsetq_lane_u8(rcon, rv, 0);
@@ -63,20 +65,19 @@ inline uint8x16_t _vkeyassist_rot1(uint8x16_t a, const uint8_t rcon) {
 // After ShiftRows: S(o12)@12, S(o13)@9, S(o14)@6, S(o15)@3
 inline uint8x16_t _vkeyassist_sub3(uint8x16_t a) {
   a = vaeseq_u8(a, vdupq_n_u8(0));
-  static const uint8_t idx[] = {12, 9, 6, 3, 12, 9, 6, 3, 12, 9, 6, 3, 12, 9, 6, 3};
+  static const uint8_t idx[] = {12, 9, 6, 3, 12, 9, 6, 3,
+                                12, 9, 6, 3, 12, 9, 6, 3};
   return vqtbl1q_u8(a, vld1q_u8(idx));
 }
 
-}  // namespace
+} // namespace
 
-template <int>
-struct aesN;
-template <>
-struct aesN<128> {
+template <int> struct aesN;
+template <> struct aesN<128> {
   enum { Nk = 4, Nr = 10 };
 
-  static void keyExpansion(const uint8_t* key, uint8x16_t* w) {
-    auto assist = [](uint8x16_t a, const uint8x16_t& b) {
+  static void keyExpansion(const uint8_t *key, uint8x16_t *w) {
+    auto assist = [](uint8x16_t a, const uint8x16_t &b) {
       a = veorq_u8(a, _vslliq_u8(a, 4));
       a = veorq_u8(a, _vslliq_u8(a, 4));
       a = veorq_u8(a, _vslliq_u8(a, 4));
@@ -97,18 +98,18 @@ struct aesN<128> {
     w[10] = assist(w[9], _vkeyassist_rot3(w[9], 0x36));
   }
 };
-template <>
-struct aesN<192> {
+template <> struct aesN<192> {
   enum { Nk = 6, Nr = 12 };
 
-  static void keyExpansion(const uint8_t* key, uint8x16_t* w) {
-    auto assist = [](uint8x16_t& a, uint8x16_t& b, const uint8x16_t& c) {
+  static void keyExpansion(const uint8_t *key, uint8x16_t *w) {
+    auto assist = [](uint8x16_t &a, uint8x16_t &b, const uint8x16_t &c) {
       a = veorq_u8(a, _vslliq_u8(a, 0x4));
       a = veorq_u8(a, _vslliq_u8(a, 0x4));
       a = veorq_u8(a, _vslliq_u8(a, 0x4));
       a = veorq_u8(a, c);
       b = veorq_u8(b, _vslliq_u8(b, 0x4));
-      b = veorq_u8(b, vreinterpretq_u8_u32(vdupq_laneq_u32(vreinterpretq_u32_u8(a), 3)));
+      b = veorq_u8(
+          b, vreinterpretq_u8_u32(vdupq_laneq_u32(vreinterpretq_u32_u8(a), 3)));
     };
 
     uint8x16_t a, b;
@@ -148,19 +149,18 @@ struct aesN<192> {
     w[12] = a;
   }
 };
-template <>
-struct aesN<256> {
+template <> struct aesN<256> {
   enum { Nk = 8, Nr = 14 };
 
-  static void keyExpansion(const uint8_t* key, uint8x16_t* w) {
-    auto assistL = [](uint8x16_t a, const uint8x16_t& b) {
+  static void keyExpansion(const uint8_t *key, uint8x16_t *w) {
+    auto assistL = [](uint8x16_t a, const uint8x16_t &b) {
       a = veorq_u8(a, _vslliq_u8(a, 0x4));
       a = veorq_u8(a, _vslliq_u8(a, 0x4));
       a = veorq_u8(a, _vslliq_u8(a, 0x4));
       a = veorq_u8(a, b);
       return a;
     };
-    auto assistH = [](const uint8x16_t& a, uint8x16_t c) {
+    auto assistH = [](const uint8x16_t &a, uint8x16_t c) {
       c = veorq_u8(c, _vslliq_u8(c, 0x4));
       c = veorq_u8(c, _vslliq_u8(c, 0x4));
       c = veorq_u8(c, _vslliq_u8(c, 0x4));
@@ -186,34 +186,28 @@ struct aesN<256> {
   }
 };
 
-template <int N>
-class CWAes {
- public:
+template <int N> class CWAes {
+public:
   // If |iv| is null, mode is ECB; |iv| not be null, mode is CBC; if it is CTR,
   // after set counter. CTR mode must be NonePadding!
-  CWAes(const void* key,
-        size_t keyLength,
-        const void* iv = nullptr,
-        size_t ivLength = 16,
-        Padding padding = Padding::PKCS7)
+  CWAes(const void *key, size_t keyLength, const void *iv = nullptr,
+        size_t ivLength = 16, Padding padding = Padding::PKCS7)
       : m_padding(padding), m_mode(Mode::ECB) {
-    if (keyLength < 4 * Nk)  // key padding zero
-    {
-      uint8_t tk[4 * Nk] = {};
-
-      memcpy(tk, key, keyLength);
-
-      aesN<N>::keyExpansion(tk, m_w);
-    } else {
-      aesN<N>::keyExpansion(reinterpret_cast<const uint8_t*>(key), m_w);
+    // Preserve legacy zero-padding/truncation while giving the AES-192
+    // expansion two complete, readable SIMD blocks.
+    alignas(16) uint8_t normalizedKey[32] = {};
+    const size_t normalizedLength = keyLength > 4 * Nk ? 4 * Nk : keyLength;
+    if (normalizedLength) {
+      memcpy(normalizedKey, key, normalizedLength);
     }
+    aesN<N>::keyExpansion(normalizedKey, m_w);
 
     // imc
     for (uint8_t i = Nr + 1; i < Nr * 2; ++i) {
       m_w[i] = vaesimcq_u8(m_w[Nr * 2 - i]);
     }
 
-    if (iv)  // iv padding zero
+    if (iv) // iv padding zero
     {
       m_mode = Mode::CBC;
       memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
@@ -229,14 +223,14 @@ class CWAes {
       return nInLen;
     } else if (m_padding == Padding::Zeros) {
       return ((nInLen + blockSize - 1) / blockSize) * blockSize;
-    } else {  // PKCS7
+    } else { // PKCS7
       return ((nInLen / blockSize) + 1) * blockSize;
     }
   }
 
   // Sets the counter value when in CBC mode.
   // The maximum length is 16 byte, if not enough padding zero.
-  void SetIV(const void* iv, size_t length) {
+  void SetIV(const void *iv, size_t length) {
     m_mode = Mode::CBC;
     memset(&m_iv, 0, sizeof(m_iv));
     memcpy(&m_iv, iv, length > 16 ? 16 : length);
@@ -244,45 +238,41 @@ class CWAes {
 
   // Sets the counter value when in CTR mode.
   // The maximum length is 16 byte, if not enough padding zero.
-  void SetCounter(const void* counter, size_t length) {
+  void SetCounter(const void *counter, size_t length) {
     m_mode = Mode::CTR;
     memset(&m_iv, 0, sizeof(m_iv));
     memcpy(&m_iv, counter, length > 16 ? 16 : length);
   }
 
-  bool Cipher(const void* in,
-              size_t inLength,
-              void* out,
-              size_t& outLength) const {
+  bool Cipher(const void *in, size_t inLength, void *out,
+              size_t &outLength) const {
     switch (m_mode) {
-      case Mode::ECB:
-        return cipherECB(in, inLength, out, outLength);
-      case Mode::CBC:
-        return cipherCBC(in, inLength, out, outLength);
-      case Mode::CTR:
-        return cipherCTR(in, inLength, out, outLength);
+    case Mode::ECB:
+      return cipherECB(in, inLength, out, outLength);
+    case Mode::CBC:
+      return cipherCBC(in, inLength, out, outLength);
+    case Mode::CTR:
+      return cipherCTR(in, inLength, out, outLength);
     }
 
     return false;
   }
 
-  bool InvCipher(const void* in,
-                 size_t inLength,
-                 void* out,
-                 size_t& outLength) const {
+  bool InvCipher(const void *in, size_t inLength, void *out,
+                 size_t &outLength) const {
     switch (m_mode) {
-      case Mode::ECB:
-        return invCipherECB(in, inLength, out, outLength);
-      case Mode::CBC:
-        return invCipherCBC(in, inLength, out, outLength);
-      case Mode::CTR:
-        return cipherCTR(in, inLength, out, outLength);
+    case Mode::ECB:
+      return invCipherECB(in, inLength, out, outLength);
+    case Mode::CBC:
+      return invCipherCBC(in, inLength, out, outLength);
+    case Mode::CTR:
+      return cipherCTR(in, inLength, out, outLength);
     }
 
     return false;
   }
 
- private:
+private:
   enum {
     Nb = 4,
     Nk = aesN<N>::Nk,
@@ -299,22 +289,22 @@ class CWAes {
   Padding m_padding;
   Mode m_mode;
 
-  void cipher(uint8x16_t& state) const {
+  void cipher(uint8x16_t &state) const {
     for (uint8_t r = 0; r < Nr - 1; ++r) {
       state = vaesmcq_u8(vaeseq_u8(state, m_w[r]));
     }
     state = veorq_u8(vaeseq_u8(state, m_w[Nr - 1]), m_w[Nr]);
   }
 
-  void invCipher(uint8x16_t& state) const {
+  void invCipher(uint8x16_t &state) const {
     for (uint8_t r = Nr; r < Nr * 2 - 1; ++r) {
       state = vaesimcq_u8(vaesdq_u8(state, m_w[r]));
     }
     state = veorq_u8(vaesdq_u8(state, m_w[Nr * 2 - 1]), m_w[0]);
   }
 
-  bool isValidPKCS7Padding(const uint8x16_t& state) const {
-    auto* pos = reinterpret_cast<const uint8_t*>(&state);
+  bool isValidPKCS7Padding(const uint8x16_t &state) const {
+    auto *pos = reinterpret_cast<const uint8_t *>(&state);
     if (pos[15] > 16 || pos[15] == 0)
       return false;
 
@@ -326,10 +316,8 @@ class CWAes {
     return true;
   }
 
-  bool cipherECB(const void* in,
-                 size_t inLength,
-                 void* out,
-                 size_t& outLength) const {
+  bool cipherECB(const void *in, size_t inLength, void *out,
+                 size_t &outLength) const {
     auto nNeedLen = SumCipherLength(inLength);
     if (outLength < nNeedLen) {
       return false;
@@ -337,8 +325,8 @@ class CWAes {
 
     uint8x16_t state;
     auto len = inLength;
-    auto input = reinterpret_cast<const uint8_t*>(in);
-    auto output = reinterpret_cast<uint8_t*>(out);
+    auto input = reinterpret_cast<const uint8_t *>(in);
+    auto output = reinterpret_cast<uint8_t *>(out);
     for (; len >= 16; len -= 16, input += 16, output += 16) {
       state = vld1q_u8(input);
       cipher(state);
@@ -347,9 +335,13 @@ class CWAes {
 
     // Padding
     if (len || Padding::PKCS7 == m_padding) {
-      state = vld1q_u8(input);
+      alignas(16) uint8_t block[16] = {};
+      if (len) {
+        memcpy(block, input, len);
+      }
       auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<int>(len);
-      memset(reinterpret_cast<uint8_t*>(&state) + len, pad, 16 - len);
+      memset(block + len, pad, 16 - len);
+      state = vld1q_u8(block);
 
       cipher(state);
       vst1q_u8(output, state);
@@ -359,18 +351,16 @@ class CWAes {
     return true;
   }
 
-  bool cipherCBC(const void* in,
-                 size_t inLength,
-                 void* out,
-                 size_t& outLength) const {
+  bool cipherCBC(const void *in, size_t inLength, void *out,
+                 size_t &outLength) const {
     auto nNeedLen = SumCipherLength(inLength);
     if (outLength < nNeedLen) {
       return false;
     }
 
     auto len = inLength;
-    auto input = reinterpret_cast<const uint8_t*>(in);
-    auto output = reinterpret_cast<uint8_t*>(out);
+    auto input = reinterpret_cast<const uint8_t *>(in);
+    auto output = reinterpret_cast<uint8_t *>(out);
 
     auto state = m_iv;
     for (; len >= 16; len -= 16, input += 16, output += 16) {
@@ -382,12 +372,12 @@ class CWAes {
     // Padding
     if (len || Padding::PKCS7 == m_padding) {
       for (uint8_t i = 0; i < len; ++i) {
-          reinterpret_cast<uint8_t*>(&state)[i] ^=
-              reinterpret_cast<const uint8_t*>(input)[i];
-        }
+        reinterpret_cast<uint8_t *>(&state)[i] ^=
+            reinterpret_cast<const uint8_t *>(input)[i];
+      }
       if (Padding::PKCS7 == m_padding) {
         for (auto i = len; i < 16; ++i) {
-          reinterpret_cast<uint8_t*>(&state)[i] ^= 16 - len;
+          reinterpret_cast<uint8_t *>(&state)[i] ^= 16 - len;
         }
       }
 
@@ -399,10 +389,8 @@ class CWAes {
     return true;
   }
 
-  bool cipherCTR(const void* in,
-                 size_t inLength,
-                 void* out,
-                 size_t& outLength) const {
+  bool cipherCTR(const void *in, size_t inLength, void *out,
+                 size_t &outLength) const {
     if (outLength < inLength) {
       return false;
     }
@@ -411,8 +399,8 @@ class CWAes {
     auto counter = vreinterpretq_u64_u8(vrev64q_u8(m_iv));
 
     int64_t len = inLength / 16;
-    auto input = reinterpret_cast<const uint8_t*>(in);
-    auto output = reinterpret_cast<uint8_t*>(out);
+    auto input = reinterpret_cast<const uint8_t *>(in);
+    auto output = reinterpret_cast<uint8_t *>(out);
     for (int64_t i = 0; i < len; ++i, input += 16, output += 16) {
       auto state = vrev64q_u8(vreinterpretq_u8_u64(counter));
       cipher(state);
@@ -426,9 +414,9 @@ class CWAes {
       auto state = vrev64q_u8(vreinterpretq_u8_u64(counter));
       cipher(state);
       for (int8_t i = 0; i < endLen; ++i) {
-        reinterpret_cast<uint8_t*>(output)[i] =
-            reinterpret_cast<const uint8_t*>(input)[i] ^
-            reinterpret_cast<uint8_t*>(&state)[i];
+        reinterpret_cast<uint8_t *>(output)[i] =
+            reinterpret_cast<const uint8_t *>(input)[i] ^
+            reinterpret_cast<uint8_t *>(&state)[i];
       }
     }
 
@@ -436,17 +424,15 @@ class CWAes {
     return true;
   }
 
-  bool invCipherECB(const void* in,
-                    size_t inLength,
-                    void* out,
-                    size_t& outLength) const {
-    if (!inLength || inLength % 16)  // invalid data length
+  bool invCipherECB(const void *in, size_t inLength, void *out,
+                    size_t &outLength) const {
+    if (!inLength || inLength % 16) // invalid data length
     {
       return false;
     }
 
     auto len = static_cast<int64_t>(inLength) - 16;
-    auto input = reinterpret_cast<const uint8_t*>(in);
+    auto input = reinterpret_cast<const uint8_t *>(in);
 
     // sum padding length
     auto state = vld1q_u8(input + len);
@@ -455,7 +441,7 @@ class CWAes {
     uint8_t padLen = 0;
     if (Padding::Zeros == m_padding) {
       for (int8_t i = 15; i >= 0; --i, ++padLen) {
-        if (reinterpret_cast<uint8_t*>(&state)[i]) {
+        if (reinterpret_cast<uint8_t *>(&state)[i]) {
           break;
         }
       }
@@ -463,7 +449,7 @@ class CWAes {
       if (!isValidPKCS7Padding(state)) {
         return false;
       }
-      padLen = reinterpret_cast<uint8_t*>(&state)[15];
+      padLen = reinterpret_cast<uint8_t *>(&state)[15];
     }
 
     if (outLength < inLength - padLen) {
@@ -473,8 +459,8 @@ class CWAes {
 
     outLength = inLength - padLen;
     uint8_t endLen = padLen ? outLength % 16 : 16;
-    auto output = reinterpret_cast<uint8_t*>(out);
-    memcpy(output + len, reinterpret_cast<uint8_t*>(&state), endLen);
+    auto output = reinterpret_cast<uint8_t *>(out);
+    memcpy(output + len, reinterpret_cast<uint8_t *>(&state), endLen);
 
     for (int i = 0; i < len; i += 16, input += 16, output += 16) {
       state = vld1q_u8(input);
@@ -485,17 +471,15 @@ class CWAes {
     return true;
   }
 
-  bool invCipherCBC(const void* in,
-                    size_t inLength,
-                    void* out,
-                    size_t& outLength) const {
-    if (!inLength || inLength % 16)  // invalid data length
+  bool invCipherCBC(const void *in, size_t inLength, void *out,
+                    size_t &outLength) const {
+    if (!inLength || inLength % 16) // invalid data length
     {
       return false;
     }
 
     auto len = static_cast<int64_t>(inLength) - 16;
-    auto input = reinterpret_cast<const uint8_t*>(in);
+    auto input = reinterpret_cast<const uint8_t *>(in);
 
     // sum padding length
     auto state = vld1q_u8(input + len);
@@ -512,7 +496,7 @@ class CWAes {
     uint8_t padLen = 0;
     if (Padding::Zeros == m_padding) {
       for (int8_t i = 15; i >= 0; --i, ++padLen) {
-        if (reinterpret_cast<uint8_t*>(&state)[i]) {
+        if (reinterpret_cast<uint8_t *>(&state)[i]) {
           break;
         }
       }
@@ -520,7 +504,7 @@ class CWAes {
       if (!isValidPKCS7Padding(state)) {
         return false;
       }
-      padLen = reinterpret_cast<uint8_t*>(&state)[15];
+      padLen = reinterpret_cast<uint8_t *>(&state)[15];
     }
 
     if (outLength < inLength - padLen) {
@@ -530,7 +514,7 @@ class CWAes {
 
     outLength = inLength - padLen;
     uint8_t endLen = padLen ? outLength % 16 : 16;
-    auto output = reinterpret_cast<uint8_t*>(out);
+    auto output = reinterpret_cast<uint8_t *>(out);
     memcpy(output + len, &state, endLen);
 
     iv = m_iv;

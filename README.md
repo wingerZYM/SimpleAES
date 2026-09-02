@@ -26,15 +26,15 @@ Each `WAes-*.hpp` is a complete, self-contained AES implementation targeting a s
 |--------|---------|----------------|
 | `WAes-gen.hpp` | Pure C++ (Generic) | None (C++11) |
 | `WAes-ni.hpp` | Intel AES-NI | `-mssse3 -maes` |
-| `WAes-vaes.hpp` | Intel VAES (AVX2) | `-mavx2 -mvaes` |
-| `WAes-vaes512.hpp` | Intel VAES (AVX512) | `-mavx512f -mvaes` |
+| `WAes-vaes.hpp` | Intel VAES (AVX2) | `-mavx2 -maes -mvaes` |
+| `WAes-vaes512.hpp` | Intel VAES (AVX512) | `-mavx512f -mavx512bw -mavx512dq -mavx512vl -maes -mvaes` |
 | `WAes-armv8.hpp` | ARMv8-A Crypto | `-march=armv8-a+crypto` |
 
 **Best for**: Server-side programs and embedded systems where the target platform is known at build time. You pick the fastest backend your hardware supports and compile directly against it -- zero indirection, maximum performance.
 
 ### Unified Adaptive Header (`WAes.hpp`)
 
-`WAes.hpp` bundles all backends into one file and automatically selects the best available implementation based on compile-time platform detection. It exposes a polymorphic `WAes::Ptr` interface with a factory function:
+`WAes.hpp` bundles the implementations into one file. It selects among the backends compiled for the target and, on x86, verifies CPU and OS SIMD-state support before using a hardware backend. It exposes a polymorphic `WAes::Ptr` interface with a factory function:
 
 ```c++
 #include "WAes.hpp"
@@ -52,7 +52,7 @@ auto aes = WAes::Create<256>(WAes::Backend::Generic, key, keyLen);
 
 Performance testing shows that the unified version performs on par with the standalone headers -- the virtual dispatch overhead is negligible compared to AES computation itself.
 
-**Best for**: Client-side applications and libraries that need to be distributed across diverse hardware. One binary adapts to x86, ARM, or fallback-generic without the user having to choose.
+**Best for**: Applications that want one API and automatic selection among the backends present in a build. See the compilation notes below before treating a GCC/Clang build as a portable x86 fat binary.
 
 ### Performance Ranking
 
@@ -145,6 +145,12 @@ Both `Cipher` and `InvCipher` return `bool` -- `true` on success, `false` on fai
 
 The encryption mode and padding method are determined when constructing the AES object. You can later switch modes using `SetIV` or `SetCounter`. The encryption and decryption interfaces are the same across all modes.
 
+Key lengths intentionally preserve the library's legacy compatibility behavior: short keys are zero-padded and long keys are truncated to 16, 24, or 32 bytes according to the selected AES strength. Applications that require strict key validation should reject non-exact lengths before construction.
+
+Zero padding adds bytes only when the final block is partial; an already block-aligned input does not gain another block. Because trailing plaintext zeroes are indistinguishable from padding, Zero-padding decryption removes trailing zeroes. PKCS7 always adds padding, including a complete 16-byte padding block for aligned input.
+
+CTR treats the supplied 16-byte value as a counter block: the first 8 bytes stay fixed and the final 8 bytes are incremented as a big-endian integer modulo 2^64. The numeric `SetCounter(iv, nonce, counter)` overload serializes all fields in big-endian order.
+
 ## Using the Unified Header (`WAes.hpp`)
 
 `WAes.hpp` provides the same operations through a polymorphic interface with extra convenience features:
@@ -181,7 +187,11 @@ Explicit backend selection:
 for (auto b : WAes::AvailableBackends())
     std::cout << WAes::GetImplName(b) << "\n";
 
-// Force a specific backend
+// Inspect everything compiled into the binary (including unavailable backends)
+for (auto b : WAes::CompiledBackends())
+    std::cout << WAes::GetImplName(b) << "\n";
+
+// Force a specific backend; returns nullptr if the CPU/OS cannot run it
 auto aes = WAes::Create<256>(WAes::Backend::Generic, key, 32);
 ```
 
@@ -203,15 +213,15 @@ RAII scope IV (restores original IV/mode on scope exit):
 |--------|---------------|
 | `WAes-gen.hpp` | None (C++11) |
 | `WAes-ni.hpp` | `-mssse3 -maes` |
-| `WAes-vaes.hpp` | `-mavx2 -mvaes` |
-| `WAes-vaes512.hpp` | `-mavx512f -mvaes` |
+| `WAes-vaes.hpp` | `-mavx2 -maes -mvaes` |
+| `WAes-vaes512.hpp` | `-mavx512f -mavx512bw -mavx512dq -mavx512vl -maes -mvaes` |
 | `WAes-armv8.hpp` | `-march=armv8-a+crypto` (Linux/macOS ARM64) |
 
 All standalone variants require at least `-std=c++11`; `-std=c++17 -O3` is recommended.
 
 ### Unified Header (`WAes.hpp`)
 
-`WAes.hpp` requires **C++20** (uses `std::span`). It detects the target platform via preprocessor macros and enables all backends that the compile flags allow. Use `-march=native` to let the compiler enable everything the host CPU supports:
+`WAes.hpp` requires **C++20** (uses `std::span`). It detects the target platform via preprocessor macros and enables the backends allowed by the compiler target:
 
 ```shell
 # x86: enables Generic + AES-NI + VAES/VAES512 as supported
@@ -220,6 +230,10 @@ c++ -std=c++20 -O3 -march=native WAes_example.cpp
 # ARM64 Linux
 c++ -std=c++20 -O3 -march=armv8-a+crypto WAes_example.cpp
 ```
+
+On GCC and Clang, instruction-set flags apply to the translation unit as a whole. A build made with `-march=native` is intended for that CPU class and must not be assumed to run on older x86 processors. Compile without AES/VAES target flags for a baseline Generic-only binary. MSVC builds include the x86 hardware implementations and use CPUID plus XGETBV at runtime; `AvailableBackends()` returns only implementations executable by both the current CPU and OS.
+
+On AArch64, the unified header enables the ARM crypto backend only when `__ARM_FEATURE_CRYPTO` is defined. A toolchain that does not expose that macro may define `WAES_ASSUME_ARM_CRYPTO`, but only when deployment hardware is guaranteed to implement the extension.
 
 ## 🧪 Test Framework (`tests/` Directory)
 
@@ -376,11 +390,11 @@ Success rate: 100.0%
 | Scenario | Recommendation |
 |----------|----------------|
 | Server / embedded, known platform | Standalone header matching your CPU (e.g. `WAes-vaes.hpp`) |
-| Distributed client, unknown hardware | `WAes.hpp` -- auto-selects best backend per machine |
+| Distributed x86 client, unknown hardware | MSVC-built `WAes.hpp`, or a baseline Generic-only GCC/Clang build |
 | Development / CI | `WAes-gen.hpp` or `WAes.hpp` |
-| ARM64 (mobile, Apple Silicon, Pi) | `WAes-armv8.hpp` or `WAes.hpp` |
+| ARM64 with Crypto Extension | `WAes-armv8.hpp` or a `WAes.hpp` build targeting `+crypto` |
 
-The guiding principle: if you know the platform at build time, the standalone header gives you the most direct path -- no virtual dispatch, no abstraction layer. If the binary needs to run on diverse hardware, `WAes.hpp` delivers the same throughput while handling backend selection automatically.
+The guiding principle: if you know the platform at build time, the standalone header gives you the most direct path -- no virtual dispatch, no abstraction layer. The unified header centralizes the API and safely selects among the implementations actually compiled into the binary; binary portability still depends on the compiler target flags described above.
 
 ## Are there any known limitations?
 

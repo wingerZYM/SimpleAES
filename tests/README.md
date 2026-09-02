@@ -11,7 +11,12 @@ This test suite is designed to verify multiple AES implementations across differ
 ### Core Files
 - `test_data.hpp` - Common test data and constants
 - `test_utils.hpp` - Test utility functions and helper classes
-- `test_template.hpp` - Generic test template containing all test logic
+- `test_options.hpp` - Validated command-line options and custom parameters
+- `test_known_answers.hpp` - FIPS-197 and NIST SP 800-38A known-answer vectors
+- `test_template.hpp` - Shared functional tests and benchmarks
+- `test_entry.hpp` - Common standalone-header executable entry point
+- `test_waes_cross.hpp` - Unified-header cross-backend validation
+- `test_waes_regressions.hpp` - Guard-page and bug regression tests
 
 ### Test Files
 - `test_generic.cpp` - Generic AES implementation test (WAes-gen.hpp)
@@ -37,6 +42,11 @@ out/
 ## Test Coverage
 
 Each implementation tests:
+
+- Standard known-answer encryption and decryption vectors
+- Round-trip behavior across boundary and multi-block lengths
+- Deterministic rejection of malformed PKCS7 padding
+- A nonzero process exit code when any correctness check fails
 
 ### AES Modes
 - **ECB Mode** - Electronic Codebook mode
@@ -97,6 +107,15 @@ make run-all
 ```bash
 make run-perf-all
 ```
+
+### Run with Address/Undefined-Behavior Sanitizers
+```bash
+make sanitize
+```
+
+The sanitizer target builds the Generic implementation and a baseline
+Generic-only `WAes.hpp` binary. Hardware-specific implementations keep their
+own explicit compiler flags in the normal build.
 
 
 
@@ -398,4 +417,4 @@ The project also includes a 512-bit VAES implementation (`WAes-vaes512.hpp`):
 - Based on AVX-512 instruction set + VAES instruction set
 - Processes 4 AES blocks at once (64 bytes)
 - Theoretically higher performance but extremely limited hardware support
-- Cannot run on most machines due to AVX-512 support issues 
+- Cannot run on most machines due to AVX-512 support issues
