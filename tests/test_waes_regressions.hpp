@@ -90,8 +90,8 @@ inline bool run() {
   std::cout << "\n=== WAes Regression Tests ===\n";
 
   for (auto backend : WAes::CompiledBackends()) {
-    const bool listed =
-        std::find(available.begin(), available.end(), backend) != available.end();
+    const bool listed = std::find(available.begin(), available.end(),
+                                  backend) != available.end();
     const bool executable = WAes::IsBackendAvailable(backend);
     check(listed == executable,
           std::string("backend availability: ") + WAes::GetImplName(backend));
@@ -108,8 +108,8 @@ inline bool run() {
   GuardedBytes guardedCiphertext(16);
   GuardedBytes guardedOutput(16);
   const bool guardPagesReady = guardedKey.data() && guardedByte.data() &&
-                               guardedBlock.data() && guardedCiphertext.data() &&
-                               guardedOutput.data();
+                               guardedBlock.data() &&
+                               guardedCiphertext.data() && guardedOutput.data();
   check(guardPagesReady, "guard-page allocation");
   if (guardPagesReady) {
     std::memcpy(guardedKey.data(), AES192_KEY, AES192_KEY_SIZE);
@@ -148,8 +148,8 @@ inline bool run() {
                                          nullptr, 0, Padding::Zeros);
       outputLength = 16;
       check(exactZero &&
-                exactZero->Cipher(guardedBlock.data(), 16,
-                                  guardedOutput.data(), outputLength) &&
+                exactZero->Cipher(guardedBlock.data(), 16, guardedOutput.data(),
+                                  outputLength) &&
                 outputLength == 16,
             name + " guarded aligned Zero output");
 
@@ -159,10 +159,10 @@ inline bool run() {
       if (encryptor)
         encryptor->SetIV(TEST_IV, IV_SIZE);
       outputLength = 16;
-      shortCbcOk =
-          shortCbcOk &&
-          encryptor->Cipher(guardedByte.data(), 1, output.data(), outputLength) &&
-          outputLength == 16;
+      shortCbcOk = shortCbcOk &&
+                   encryptor->Cipher(guardedByte.data(), 1, output.data(),
+                                     outputLength) &&
+                   outputLength == 16;
       if (shortCbcOk)
         std::memcpy(guardedCiphertext.data(), output.data(), 16);
 
@@ -172,11 +172,10 @@ inline bool run() {
       if (decryptor)
         decryptor->SetIV(TEST_IV, IV_SIZE);
       outputLength = output.size();
-      shortCbcOk =
-          shortCbcOk &&
-          decryptor->InvCipher(guardedCiphertext.data(), 16, output.data(),
-                               outputLength) &&
-          outputLength == 1 && output[0] == guardedByte.data()[0];
+      shortCbcOk = shortCbcOk &&
+                   decryptor->InvCipher(guardedCiphertext.data(), 16,
+                                        output.data(), outputLength) &&
+                   outputLength == 1 && output[0] == guardedByte.data()[0];
       check(shortCbcOk, name + " guarded one-block CBC decryption");
     }
 
@@ -222,14 +221,41 @@ inline bool run() {
     if (cbcDecrypt)
       cbcDecrypt->SetIV(TEST_IV, IV_SIZE);
     size_t decryptedLength = inplaceLength;
-    inplaceOk =
-        inplaceOk &&
-        cbcDecrypt->InvCipher(inplaceBuffer.data(), inplaceLength,
-                              inplaceBuffer.data(), decryptedLength) &&
-        decryptedLength == inplacePlaintext.size() &&
-        std::equal(inplacePlaintext.begin(), inplacePlaintext.end(),
-                   inplaceBuffer.begin());
+    inplaceOk = inplaceOk &&
+                cbcDecrypt->InvCipher(inplaceBuffer.data(), inplaceLength,
+                                      inplaceBuffer.data(), decryptedLength) &&
+                decryptedLength == inplacePlaintext.size() &&
+                std::equal(inplacePlaintext.begin(), inplacePlaintext.end(),
+                           inplaceBuffer.begin());
     check(inplaceOk, name + " in-place CBC decryption");
+
+    const auto unalignedData = getTestData(31);
+    std::array<uint8_t, 48> unalignedInput{};
+    std::array<uint8_t, 48> unalignedCipher{};
+    std::array<uint8_t, 48> unalignedPlain{};
+    std::copy(unalignedData.begin(), unalignedData.end(),
+              unalignedInput.begin() + 1);
+
+    auto unalignedEncrypt = WAes::Create<128>(
+        backend, AES128_KEY, AES128_KEY_SIZE, nullptr, 0, Padding::PKCS7);
+    size_t unalignedCipherLength = unalignedCipher.size() - 1;
+    bool unalignedOk = unalignedEncrypt &&
+                       unalignedEncrypt->Cipher(
+                           unalignedInput.data() + 1, unalignedData.size(),
+                           unalignedCipher.data() + 1, unalignedCipherLength) &&
+                       unalignedCipherLength == 32;
+
+    auto unalignedDecrypt = WAes::Create<128>(
+        backend, AES128_KEY, AES128_KEY_SIZE, nullptr, 0, Padding::PKCS7);
+    size_t unalignedPlainLength = unalignedPlain.size() - 1;
+    unalignedOk = unalignedOk && unalignedDecrypt &&
+                  unalignedDecrypt->InvCipher(
+                      unalignedCipher.data() + 1, unalignedCipherLength,
+                      unalignedPlain.data() + 1, unalignedPlainLength) &&
+                  unalignedPlainLength == unalignedData.size() &&
+                  std::equal(unalignedData.begin(), unalignedData.end(),
+                             unalignedPlain.begin() + 1);
+    check(unalignedOk, name + " unaligned input/output");
 
     std::array<uint8_t, 16> counter = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
                                        0x16, 0x17, 0xff, 0xff, 0xff, 0xff,
@@ -243,8 +269,9 @@ inline bool run() {
     if (ctr)
       ctr->SetCounter(counter.data(), counter.size());
     size_t ctrLength = ctrCipher.size();
-    ctrOk = ctrOk && ctr->Cipher(zeroInput.data(), zeroInput.size(),
-                                 ctrCipher.data(), ctrLength) &&
+    ctrOk = ctrOk &&
+            ctr->Cipher(zeroInput.data(), zeroInput.size(), ctrCipher.data(),
+                        ctrLength) &&
             ctrLength == ctrCipher.size();
 
     auto counterBlock = counter;
@@ -282,13 +309,12 @@ inline bool run() {
     bytes->SetCounter(serializedCounter.data(), serializedCounter.size());
   size_t numericLength = numericOutput.size();
   size_t byteLength = byteOutput.size();
-  numericOk =
-      numericOk &&
-      numeric->Cipher(zeroInput.data(), zeroInput.size(), numericOutput.data(),
-                      numericLength) &&
-      bytes->Cipher(zeroInput.data(), zeroInput.size(), byteOutput.data(),
-                    byteLength) &&
-      numericOutput == byteOutput;
+  numericOk = numericOk &&
+              numeric->Cipher(zeroInput.data(), zeroInput.size(),
+                              numericOutput.data(), numericLength) &&
+              bytes->Cipher(zeroInput.data(), zeroInput.size(),
+                            byteOutput.data(), byteLength) &&
+              numericOutput == byteOutput;
   check(numericOk, "numeric counter uses big-endian serialization");
 
   std::cout << "Regression tests: " << passed << " passed, " << failed

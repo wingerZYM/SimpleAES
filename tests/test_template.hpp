@@ -67,7 +67,8 @@ void writeTestResultToFile(const std::string &implName,
   // Write input data (first 32 bytes)
   file << "Input Start: ";
   for (size_t i = 0; i < std::min(input.size(), size_t(32)); ++i) {
-    file << std::hex << std::setw(2) << std::setfill('0') << (int)input[i];
+    file << std::hex << std::setw(2) << std::setfill('0')
+         << static_cast<int>(input[i]);
   }
   file << std::endl;
 
@@ -76,7 +77,8 @@ void writeTestResultToFile(const std::string &implName,
     file << "Input End: ";
     size_t start = input.size() > 16 ? input.size() - 16 : 0;
     for (size_t i = start; i < input.size(); ++i) {
-      file << std::hex << std::setw(2) << std::setfill('0') << (int)input[i];
+      file << std::hex << std::setw(2) << std::setfill('0')
+           << static_cast<int>(input[i]);
     }
     file << std::endl;
   }
@@ -84,7 +86,8 @@ void writeTestResultToFile(const std::string &implName,
   // Write ciphertext (first 32 bytes)
   file << "Cipher Start: ";
   for (size_t i = 0; i < std::min(ciphertext.size(), size_t(32)); ++i) {
-    file << std::hex << std::setw(2) << std::setfill('0') << (int)ciphertext[i];
+    file << std::hex << std::setw(2) << std::setfill('0')
+         << static_cast<int>(ciphertext[i]);
   }
   file << std::endl;
 
@@ -94,7 +97,7 @@ void writeTestResultToFile(const std::string &implName,
     size_t start = ciphertext.size() > 16 ? ciphertext.size() - 16 : 0;
     for (size_t i = start; i < ciphertext.size(); ++i) {
       file << std::hex << std::setw(2) << std::setfill('0')
-           << (int)ciphertext[i];
+           << static_cast<int>(ciphertext[i]);
     }
     file << std::endl;
   }
@@ -102,7 +105,8 @@ void writeTestResultToFile(const std::string &implName,
   // Write decrypted data (first 32 bytes)
   file << "Decrypted Start: ";
   for (size_t i = 0; i < std::min(decrypted.size(), size_t(32)); ++i) {
-    file << std::hex << std::setw(2) << std::setfill('0') << (int)decrypted[i];
+    file << std::hex << std::setw(2) << std::setfill('0')
+         << static_cast<int>(decrypted[i]);
   }
   file << std::endl;
 
@@ -112,7 +116,7 @@ void writeTestResultToFile(const std::string &implName,
     size_t start = decrypted.size() > 16 ? decrypted.size() - 16 : 0;
     for (size_t i = start; i < decrypted.size(); ++i) {
       file << std::hex << std::setw(2) << std::setfill('0')
-           << (int)decrypted[i];
+           << static_cast<int>(decrypted[i]);
     }
     file << std::endl;
   }

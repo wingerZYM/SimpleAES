@@ -745,11 +745,10 @@ private:
 
   virtual Ptr Clone() const override { return Ptr(new WAesArmV8<N>(*this)); }
 
-  template <int>
-  friend Ptr WAes::Create(const void *, size_t, const void *, size_t, Padding);
-  template <int>
-  friend Ptr WAes::Create(Backend, const void *, size_t, const void *, size_t,
-                          Padding);
+  friend Ptr WAes::Create<N>(const void *, size_t, const void *, size_t,
+                             Padding);
+  friend Ptr WAes::Create<N>(Backend, const void *, size_t, const void *,
+                             size_t, Padding);
 };
 
 #endif // defined(WAES_ARMV8)
@@ -1263,11 +1262,10 @@ protected:
 
   virtual Ptr Clone() const override { return Ptr(new WAesNi<N>(*this)); }
 
-  template <int>
-  friend Ptr WAes::Create(const void *, size_t, const void *, size_t, Padding);
-  template <int>
-  friend Ptr WAes::Create(Backend, const void *, size_t, const void *, size_t,
-                          Padding);
+  friend Ptr WAes::Create<N>(const void *, size_t, const void *, size_t,
+                             Padding);
+  friend Ptr WAes::Create<N>(Backend, const void *, size_t, const void *,
+                             size_t, Padding);
 };
 
 #if defined(WAES_VAES)
@@ -1447,11 +1445,10 @@ private:
 
   virtual Ptr Clone() const override { return Ptr(new WAesV<N>(*this)); }
 
-  template <int>
-  friend Ptr WAes::Create(const void *, size_t, const void *, size_t, Padding);
-  template <int>
-  friend Ptr WAes::Create(Backend, const void *, size_t, const void *, size_t,
-                          Padding);
+  friend Ptr WAes::Create<N>(const void *, size_t, const void *, size_t,
+                             Padding);
+  friend Ptr WAes::Create<N>(Backend, const void *, size_t, const void *,
+                             size_t, Padding);
 };
 #endif // defined(WAES_VAES)
 
@@ -1647,17 +1644,16 @@ private:
 
   virtual Ptr Clone() const override { return Ptr(new WAesV512<N>(*this)); }
 
-  template <int>
-  friend Ptr WAes::Create(const void *, size_t, const void *, size_t, Padding);
-  template <int>
-  friend Ptr WAes::Create(Backend, const void *, size_t, const void *, size_t,
-                          Padding);
+  friend Ptr WAes::Create<N>(const void *, size_t, const void *, size_t,
+                             Padding);
+  friend Ptr WAes::Create<N>(Backend, const void *, size_t, const void *,
+                             size_t, Padding);
 };
 #endif // defined(WAES_VAES512)
 
 #endif
 
-inline const uint8_t g_sBox[256] = {
+alignas(64) inline const uint8_t g_sBox[256] = {
     /* 0 1 2 3 4 5 6 7 8 9 a b c d e f */
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5,
     0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76, /*0*/
@@ -1693,7 +1689,7 @@ inline const uint8_t g_sBox[256] = {
     0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16, /*f*/
 };
 
-inline const uint8_t g_invSbox[256] = {
+alignas(64) inline const uint8_t g_invSbox[256] = {
     /* 0 1 2 3 4 5 6 7 8 9 a b c d e f */
     0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38,
     0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb, /*0*/
@@ -1729,7 +1725,7 @@ inline const uint8_t g_invSbox[256] = {
     0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d, /*f*/
 };
 
-inline const uint32_t Te0[256] = {
+alignas(64) inline const uint32_t Te0[256] = {
     0xa56363c6u, 0x847c7cf8u, 0x997777eeu, 0x8d7b7bf6u, 0x0df2f2ffu,
     0xbd6b6bd6u, 0xb16f6fdeu, 0x54c5c591u, 0x50303060u, 0x03010102u,
     0xa96767ceu, 0x7d2b2b56u, 0x19fefee7u, 0x62d7d7b5u, 0xe6abab4du,
@@ -1784,7 +1780,7 @@ inline const uint32_t Te0[256] = {
     0x3a16162cu,
 };
 
-inline const uint32_t Te1[256] = {
+alignas(64) inline const uint32_t Te1[256] = {
     0xc6a56363u, 0xf8847c7cu, 0xee997777u, 0xf68d7b7bu, 0xff0df2f2u,
     0xd6bd6b6bu, 0xdeb16f6fu, 0x9154c5c5u, 0x60503030u, 0x02030101u,
     0xcea96767u, 0x567d2b2bu, 0xe719fefeu, 0xb562d7d7u, 0x4de6ababu,
@@ -1839,7 +1835,7 @@ inline const uint32_t Te1[256] = {
     0x2c3a1616u,
 };
 
-inline const uint32_t Te2[256] = {
+alignas(64) inline const uint32_t Te2[256] = {
     0x63c6a563u, 0x7cf8847cu, 0x77ee9977u, 0x7bf68d7bu, 0xf2ff0df2u,
     0x6bd6bd6bu, 0x6fdeb16fu, 0xc59154c5u, 0x30605030u, 0x01020301u,
     0x67cea967u, 0x2b567d2bu, 0xfee719feu, 0xd7b562d7u, 0xab4de6abu,
@@ -1894,7 +1890,7 @@ inline const uint32_t Te2[256] = {
     0x162c3a16u,
 };
 
-inline const uint32_t Te3[256] = {
+alignas(64) inline const uint32_t Te3[256] = {
     0x6363c6a5u, 0x7c7cf884u, 0x7777ee99u, 0x7b7bf68du, 0xf2f2ff0du,
     0x6b6bd6bdu, 0x6f6fdeb1u, 0xc5c59154u, 0x30306050u, 0x01010203u,
     0x6767cea9u, 0x2b2b567du, 0xfefee719u, 0xd7d7b562u, 0xabab4de6u,
@@ -1949,7 +1945,7 @@ inline const uint32_t Te3[256] = {
     0x16162c3au,
 };
 
-inline const uint32_t Td0[256] = {
+alignas(64) inline const uint32_t Td0[256] = {
     0x50a7f451u, 0x5365417eu, 0xc3a4171au, 0x965e273au, 0xcb6bab3bu,
     0xf1459d1fu, 0xab58faacu, 0x9303e34bu, 0x55fa3020u, 0xf66d76adu,
     0x9176cc88u, 0x254c02f5u, 0xfcd7e54fu, 0xd7cb2ac5u, 0x80443526u,
@@ -2004,7 +2000,7 @@ inline const uint32_t Td0[256] = {
     0x4257b8d0u,
 };
 
-inline const uint32_t Td1[256] = {
+alignas(64) inline const uint32_t Td1[256] = {
     0x5150a7f4u, 0x7e536541u, 0x1ac3a417u, 0x3a965e27u, 0x3bcb6babu,
     0x1ff1459du, 0xacab58fau, 0x4b9303e3u, 0x2055fa30u, 0xadf66d76u,
     0x889176ccu, 0xf5254c02u, 0x4ffcd7e5u, 0xc5d7cb2au, 0x26804435u,
@@ -2059,7 +2055,7 @@ inline const uint32_t Td1[256] = {
     0xd04257b8u,
 };
 
-inline const uint32_t Td2[256] = {
+alignas(64) inline const uint32_t Td2[256] = {
     0xf45150a7u, 0x417e5365u, 0x171ac3a4u, 0x273a965eu, 0xab3bcb6bu,
     0x9d1ff145u, 0xfaacab58u, 0xe34b9303u, 0x302055fau, 0x76adf66du,
     0xcc889176u, 0x02f5254cu, 0xe54ffcd7u, 0x2ac5d7cbu, 0x35268044u,
@@ -2114,7 +2110,7 @@ inline const uint32_t Td2[256] = {
     0xb8d04257u,
 };
 
-inline const uint32_t Td3[256] = {
+alignas(64) inline const uint32_t Td3[256] = {
     0xa7f45150u, 0x65417e53u, 0xa4171ac3u, 0x5e273a96u, 0x6bab3bcbu,
     0x459d1ff1u, 0x58faacabu, 0x03e34b93u, 0xfa302055u, 0x6d76adf6u,
     0x76cc8891u, 0x4c02f525u, 0xd7e54ffcu, 0xcb2ac5d7u, 0x44352680u,
@@ -2180,18 +2176,32 @@ private:
   alignas(16) uint32_t m_dw[Nb * (Nr + 1)];
   alignas(16) uint8_t m_iv[16] = {};
 
-  static uint8_t gfmul(uint8_t a, uint8_t b) noexcept {
-    uint8_t r = 0;
-    for (int i = 0; i < 8; ++i) {
-      if (b & 1)
-        r ^= a;
-      const bool carry = (a & 0x80) != 0;
-      a = (uint8_t)(a << 1);
-      if (carry)
-        a ^= 0x1b;
-      b >>= 1;
-    }
-    return r;
+  static uint32_t load32LE(const uint8_t *p) noexcept {
+    return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+           (static_cast<uint32_t>(p[2]) << 16) |
+           (static_cast<uint32_t>(p[3]) << 24);
+  }
+
+  static void store32LE(uint8_t *p, uint32_t value) noexcept {
+    p[0] = static_cast<uint8_t>(value);
+    p[1] = static_cast<uint8_t>(value >> 8);
+    p[2] = static_cast<uint8_t>(value >> 16);
+    p[3] = static_cast<uint8_t>(value >> 24);
+  }
+
+  static uint64_t load64BE(const uint8_t *p) noexcept {
+    return (static_cast<uint64_t>(p[0]) << 56) |
+           (static_cast<uint64_t>(p[1]) << 48) |
+           (static_cast<uint64_t>(p[2]) << 40) |
+           (static_cast<uint64_t>(p[3]) << 32) |
+           (static_cast<uint64_t>(p[4]) << 24) |
+           (static_cast<uint64_t>(p[5]) << 16) |
+           (static_cast<uint64_t>(p[6]) << 8) | static_cast<uint64_t>(p[7]);
+  }
+
+  static uint32_t byteSwap32(uint32_t value) noexcept {
+    return (value << 24) | ((value & 0x0000ff00u) << 8) |
+           ((value & 0x00ff0000u) >> 8) | (value >> 24);
   }
 
   static uint32_t invMixCol(uint32_t col) noexcept {
@@ -2199,26 +2209,8 @@ private:
     const uint8_t b1 = (col >> 8) & 0xff;
     const uint8_t b2 = (col >> 16) & 0xff;
     const uint8_t b3 = col >> 24;
-    return (uint32_t)(gfmul(b0, 0xe) ^ gfmul(b1, 0xb) ^ gfmul(b2, 0xd) ^
-                      gfmul(b3, 0x9)) |
-           ((uint32_t)(gfmul(b0, 0x9) ^ gfmul(b1, 0xe) ^ gfmul(b2, 0xb) ^
-                       gfmul(b3, 0xd))
-            << 8) |
-           ((uint32_t)(gfmul(b0, 0xd) ^ gfmul(b1, 0x9) ^ gfmul(b2, 0xe) ^
-                       gfmul(b3, 0xb))
-            << 16) |
-           ((uint32_t)(gfmul(b0, 0xb) ^ gfmul(b1, 0xd) ^ gfmul(b2, 0x9) ^
-                       gfmul(b3, 0xe))
-            << 24);
-  }
-
-  static uint64_t be64(uint64_t x) noexcept {
-    uint8_t b[8];
-    memcpy(b, &x, 8);
-    return ((uint64_t)b[0] << 56) | ((uint64_t)b[1] << 48) |
-           ((uint64_t)b[2] << 40) | ((uint64_t)b[3] << 32) |
-           ((uint64_t)b[4] << 24) | ((uint64_t)b[5] << 16) |
-           ((uint64_t)b[6] << 8) | (uint64_t)b[7];
+    return Td0[g_sBox[b0]] ^ Td3[g_sBox[b1]] ^ Td2[g_sBox[b2]] ^
+           Td1[g_sBox[b3]];
   }
 
   WAesGen(const void *key, size_t keyLength, const void *iv, size_t ivLength,
@@ -2243,24 +2235,25 @@ private:
     static const uint8_t rc[] = {0x00, 0x01, 0x02, 0x04, 0x08, 0x10,
                                  0x20, 0x40, 0x80, 0x1b, 0x36};
 
-    auto subWord = [](uint8_t *w) {
-      for (uint8_t i = 0; i < 4; ++i) {
-        w[i] = g_sBox[w[i]];
-      }
+    auto subWord = [](uint32_t word) {
+      return static_cast<uint32_t>(g_sBox[word & 0xff]) |
+             (static_cast<uint32_t>(g_sBox[(word >> 8) & 0xff]) << 8) |
+             (static_cast<uint32_t>(g_sBox[(word >> 16) & 0xff]) << 16) |
+             (static_cast<uint32_t>(g_sBox[word >> 24]) << 24);
     };
 
     for (uint8_t i = 0; i < Nk; ++i) {
-      m_w[i] = *reinterpret_cast<const uint32_t *>(key + 4 * i);
+      m_w[i] = load32LE(key + 4 * i);
     }
 
     for (int i = Nk; i < Nb * (Nr + 1); ++i) {
       m_w[i] = m_w[i - 1];
       if (0 == i % Nk) {
         m_w[i] = (m_w[i] >> 8) | (m_w[i] << 24); // rot word
-        subWord(reinterpret_cast<uint8_t *>(m_w + i));
+        m_w[i] = subWord(m_w[i]);
         m_w[i] ^= rc[i / Nk];
       } else if (8 == Nk && 4 == i % Nk) {
-        subWord(reinterpret_cast<uint8_t *>(m_w + i));
+        m_w[i] = subWord(m_w[i]);
       }
       m_w[i] ^= m_w[i - Nk];
     }
@@ -2276,106 +2269,166 @@ private:
       m_dw[Nb * Nr + i] = m_w[i];
   }
 
-  uint8_t *cipher(uint8_t *state) const {
-    auto s = reinterpret_cast<uint32_t *>(state);
+  void cipherWords(uint32_t s0, uint32_t s1, uint32_t s2, uint32_t s3,
+                   uint8_t *output) const {
     const uint32_t *rk = m_w;
 
-    uint32_t s0 = s[0] ^ rk[0];
-    uint32_t s1 = s[1] ^ rk[1];
-    uint32_t s2 = s[2] ^ rk[2];
-    uint32_t s3 = s[3] ^ rk[3];
-    rk += 4;
+    s0 ^= rk[0];
+    s1 ^= rk[1];
+    s2 ^= rk[2];
+    s3 ^= rk[3];
+#define WAES_GEN_ENCRYPT_ROUND(keyOffset)                                      \
+  do {                                                                         \
+    const uint32_t t0 = Te0[s0 & 0xff] ^ Te3[(s1 >> 8) & 0xff] ^               \
+                        Te2[(s2 >> 16) & 0xff] ^ Te1[s3 >> 24] ^               \
+                        rk[(keyOffset)];                                       \
+    const uint32_t t1 = Te0[s1 & 0xff] ^ Te3[(s2 >> 8) & 0xff] ^               \
+                        Te2[(s3 >> 16) & 0xff] ^ Te1[s0 >> 24] ^               \
+                        rk[(keyOffset) + 1];                                   \
+    const uint32_t t2 = Te0[s2 & 0xff] ^ Te3[(s3 >> 8) & 0xff] ^               \
+                        Te2[(s0 >> 16) & 0xff] ^ Te1[s1 >> 24] ^               \
+                        rk[(keyOffset) + 2];                                   \
+    const uint32_t t3 = Te0[s3 & 0xff] ^ Te3[(s0 >> 8) & 0xff] ^               \
+                        Te2[(s1 >> 16) & 0xff] ^ Te1[s2 >> 24] ^               \
+                        rk[(keyOffset) + 3];                                   \
+    s0 = t0;                                                                   \
+    s1 = t1;                                                                   \
+    s2 = t2;                                                                   \
+    s3 = t3;                                                                   \
+  } while (false)
 
-    uint32_t t0, t1, t2, t3;
-    for (uint8_t r = 1; r < Nr; ++r, rk += 4) {
-      t0 = Te0[s0 & 0xff] ^ Te3[(s1 >> 8) & 0xff] ^ Te2[(s2 >> 16) & 0xff] ^
-           Te1[s3 >> 24] ^ rk[0];
-      t1 = Te0[s1 & 0xff] ^ Te3[(s2 >> 8) & 0xff] ^ Te2[(s3 >> 16) & 0xff] ^
-           Te1[s0 >> 24] ^ rk[1];
-      t2 = Te0[s2 & 0xff] ^ Te3[(s3 >> 8) & 0xff] ^ Te2[(s0 >> 16) & 0xff] ^
-           Te1[s1 >> 24] ^ rk[2];
-      t3 = Te0[s3 & 0xff] ^ Te3[(s0 >> 8) & 0xff] ^ Te2[(s1 >> 16) & 0xff] ^
-           Te1[s2 >> 24] ^ rk[3];
-      s0 = t0;
-      s1 = t1;
-      s2 = t2;
-      s3 = t3;
+    WAES_GEN_ENCRYPT_ROUND(4);
+    WAES_GEN_ENCRYPT_ROUND(8);
+    WAES_GEN_ENCRYPT_ROUND(12);
+    WAES_GEN_ENCRYPT_ROUND(16);
+    WAES_GEN_ENCRYPT_ROUND(20);
+    WAES_GEN_ENCRYPT_ROUND(24);
+    WAES_GEN_ENCRYPT_ROUND(28);
+    WAES_GEN_ENCRYPT_ROUND(32);
+    WAES_GEN_ENCRYPT_ROUND(36);
+    if (Nr > 10) {
+      WAES_GEN_ENCRYPT_ROUND(40);
+      WAES_GEN_ENCRYPT_ROUND(44);
     }
+    if (Nr > 12) {
+      WAES_GEN_ENCRYPT_ROUND(48);
+      WAES_GEN_ENCRYPT_ROUND(52);
+    }
+#undef WAES_GEN_ENCRYPT_ROUND
+    rk = m_w + 4 * Nr;
 
     // Final round: SubBytes + ShiftRows + AddRoundKey (no MixColumns)
-    s[0] = ((uint32_t)g_sBox[s0 & 0xff] |
-            ((uint32_t)g_sBox[(s1 >> 8) & 0xff] << 8) |
-            ((uint32_t)g_sBox[(s2 >> 16) & 0xff] << 16) |
-            ((uint32_t)g_sBox[s3 >> 24] << 24)) ^
-           rk[0];
-    s[1] = ((uint32_t)g_sBox[s1 & 0xff] |
-            ((uint32_t)g_sBox[(s2 >> 8) & 0xff] << 8) |
-            ((uint32_t)g_sBox[(s3 >> 16) & 0xff] << 16) |
-            ((uint32_t)g_sBox[s0 >> 24] << 24)) ^
-           rk[1];
-    s[2] = ((uint32_t)g_sBox[s2 & 0xff] |
-            ((uint32_t)g_sBox[(s3 >> 8) & 0xff] << 8) |
-            ((uint32_t)g_sBox[(s0 >> 16) & 0xff] << 16) |
-            ((uint32_t)g_sBox[s1 >> 24] << 24)) ^
-           rk[2];
-    s[3] = ((uint32_t)g_sBox[s3 & 0xff] |
-            ((uint32_t)g_sBox[(s0 >> 8) & 0xff] << 8) |
-            ((uint32_t)g_sBox[(s1 >> 16) & 0xff] << 16) |
-            ((uint32_t)g_sBox[s2 >> 24] << 24)) ^
-           rk[3];
-
-    return state;
+    store32LE(output,
+              (static_cast<uint32_t>(g_sBox[s0 & 0xff]) |
+               (static_cast<uint32_t>(g_sBox[(s1 >> 8) & 0xff]) << 8) |
+               (static_cast<uint32_t>(g_sBox[(s2 >> 16) & 0xff]) << 16) |
+               (static_cast<uint32_t>(g_sBox[s3 >> 24]) << 24)) ^
+                  rk[0]);
+    store32LE(output + 4,
+              (static_cast<uint32_t>(g_sBox[s1 & 0xff]) |
+               (static_cast<uint32_t>(g_sBox[(s2 >> 8) & 0xff]) << 8) |
+               (static_cast<uint32_t>(g_sBox[(s3 >> 16) & 0xff]) << 16) |
+               (static_cast<uint32_t>(g_sBox[s0 >> 24]) << 24)) ^
+                  rk[1]);
+    store32LE(output + 8,
+              (static_cast<uint32_t>(g_sBox[s2 & 0xff]) |
+               (static_cast<uint32_t>(g_sBox[(s3 >> 8) & 0xff]) << 8) |
+               (static_cast<uint32_t>(g_sBox[(s0 >> 16) & 0xff]) << 16) |
+               (static_cast<uint32_t>(g_sBox[s1 >> 24]) << 24)) ^
+                  rk[2]);
+    store32LE(output + 12,
+              (static_cast<uint32_t>(g_sBox[s3 & 0xff]) |
+               (static_cast<uint32_t>(g_sBox[(s0 >> 8) & 0xff]) << 8) |
+               (static_cast<uint32_t>(g_sBox[(s1 >> 16) & 0xff]) << 16) |
+               (static_cast<uint32_t>(g_sBox[s2 >> 24]) << 24)) ^
+                  rk[3]);
   }
 
-  uint8_t *invCipher(uint8_t *state) const {
-    auto s = reinterpret_cast<uint32_t *>(state);
+  void cipher(const uint8_t *input, uint8_t *output) const {
+    cipherWords(load32LE(input), load32LE(input + 4), load32LE(input + 8),
+                load32LE(input + 12), output);
+  }
+
+  void cipherXor(const uint8_t *input, const uint8_t *xorBlock,
+                 uint8_t *output) const {
+    cipherWords(load32LE(input) ^ load32LE(xorBlock),
+                load32LE(input + 4) ^ load32LE(xorBlock + 4),
+                load32LE(input + 8) ^ load32LE(xorBlock + 8),
+                load32LE(input + 12) ^ load32LE(xorBlock + 12), output);
+  }
+
+  void invCipher(const uint8_t *input, uint8_t *output) const {
     const uint32_t *dk = m_dw;
 
-    uint32_t s0 = s[0] ^ dk[0];
-    uint32_t s1 = s[1] ^ dk[1];
-    uint32_t s2 = s[2] ^ dk[2];
-    uint32_t s3 = s[3] ^ dk[3];
-    dk += 4;
+    uint32_t s0 = load32LE(input) ^ dk[0];
+    uint32_t s1 = load32LE(input + 4) ^ dk[1];
+    uint32_t s2 = load32LE(input + 8) ^ dk[2];
+    uint32_t s3 = load32LE(input + 12) ^ dk[3];
+#define WAES_GEN_DECRYPT_ROUND(keyOffset)                                      \
+  do {                                                                         \
+    const uint32_t t0 = Td0[s0 & 0xff] ^ Td3[(s3 >> 8) & 0xff] ^               \
+                        Td2[(s2 >> 16) & 0xff] ^ Td1[s1 >> 24] ^               \
+                        dk[(keyOffset)];                                       \
+    const uint32_t t1 = Td0[s1 & 0xff] ^ Td3[(s0 >> 8) & 0xff] ^               \
+                        Td2[(s3 >> 16) & 0xff] ^ Td1[s2 >> 24] ^               \
+                        dk[(keyOffset) + 1];                                   \
+    const uint32_t t2 = Td0[s2 & 0xff] ^ Td3[(s1 >> 8) & 0xff] ^               \
+                        Td2[(s0 >> 16) & 0xff] ^ Td1[s3 >> 24] ^               \
+                        dk[(keyOffset) + 2];                                   \
+    const uint32_t t3 = Td0[s3 & 0xff] ^ Td3[(s2 >> 8) & 0xff] ^               \
+                        Td2[(s1 >> 16) & 0xff] ^ Td1[s0 >> 24] ^               \
+                        dk[(keyOffset) + 3];                                   \
+    s0 = t0;                                                                   \
+    s1 = t1;                                                                   \
+    s2 = t2;                                                                   \
+    s3 = t3;                                                                   \
+  } while (false)
 
-    uint32_t t0, t1, t2, t3;
-    for (uint8_t r = 1; r < Nr; ++r, dk += 4) {
-      t0 = Td0[s0 & 0xff] ^ Td3[(s3 >> 8) & 0xff] ^ Td2[(s2 >> 16) & 0xff] ^
-           Td1[s1 >> 24] ^ dk[0];
-      t1 = Td0[s1 & 0xff] ^ Td3[(s0 >> 8) & 0xff] ^ Td2[(s3 >> 16) & 0xff] ^
-           Td1[s2 >> 24] ^ dk[1];
-      t2 = Td0[s2 & 0xff] ^ Td3[(s1 >> 8) & 0xff] ^ Td2[(s0 >> 16) & 0xff] ^
-           Td1[s3 >> 24] ^ dk[2];
-      t3 = Td0[s3 & 0xff] ^ Td3[(s2 >> 8) & 0xff] ^ Td2[(s1 >> 16) & 0xff] ^
-           Td1[s0 >> 24] ^ dk[3];
-      s0 = t0;
-      s1 = t1;
-      s2 = t2;
-      s3 = t3;
+    WAES_GEN_DECRYPT_ROUND(4);
+    WAES_GEN_DECRYPT_ROUND(8);
+    WAES_GEN_DECRYPT_ROUND(12);
+    WAES_GEN_DECRYPT_ROUND(16);
+    WAES_GEN_DECRYPT_ROUND(20);
+    WAES_GEN_DECRYPT_ROUND(24);
+    WAES_GEN_DECRYPT_ROUND(28);
+    WAES_GEN_DECRYPT_ROUND(32);
+    WAES_GEN_DECRYPT_ROUND(36);
+    if (Nr > 10) {
+      WAES_GEN_DECRYPT_ROUND(40);
+      WAES_GEN_DECRYPT_ROUND(44);
     }
+    if (Nr > 12) {
+      WAES_GEN_DECRYPT_ROUND(48);
+      WAES_GEN_DECRYPT_ROUND(52);
+    }
+#undef WAES_GEN_DECRYPT_ROUND
+    dk = m_dw + 4 * Nr;
 
     // Final round: InvSubBytes + InvShiftRows + AddRoundKey (no InvMixColumns)
-    s[0] = ((uint32_t)g_invSbox[s0 & 0xff] |
-            ((uint32_t)g_invSbox[(s3 >> 8) & 0xff] << 8) |
-            ((uint32_t)g_invSbox[(s2 >> 16) & 0xff] << 16) |
-            ((uint32_t)g_invSbox[s1 >> 24] << 24)) ^
-           dk[0];
-    s[1] = ((uint32_t)g_invSbox[s1 & 0xff] |
-            ((uint32_t)g_invSbox[(s0 >> 8) & 0xff] << 8) |
-            ((uint32_t)g_invSbox[(s3 >> 16) & 0xff] << 16) |
-            ((uint32_t)g_invSbox[s2 >> 24] << 24)) ^
-           dk[1];
-    s[2] = ((uint32_t)g_invSbox[s2 & 0xff] |
-            ((uint32_t)g_invSbox[(s1 >> 8) & 0xff] << 8) |
-            ((uint32_t)g_invSbox[(s0 >> 16) & 0xff] << 16) |
-            ((uint32_t)g_invSbox[s3 >> 24] << 24)) ^
-           dk[2];
-    s[3] = ((uint32_t)g_invSbox[s3 & 0xff] |
-            ((uint32_t)g_invSbox[(s2 >> 8) & 0xff] << 8) |
-            ((uint32_t)g_invSbox[(s1 >> 16) & 0xff] << 16) |
-            ((uint32_t)g_invSbox[s0 >> 24] << 24)) ^
-           dk[3];
-
-    return state;
+    store32LE(output,
+              (static_cast<uint32_t>(g_invSbox[s0 & 0xff]) |
+               (static_cast<uint32_t>(g_invSbox[(s3 >> 8) & 0xff]) << 8) |
+               (static_cast<uint32_t>(g_invSbox[(s2 >> 16) & 0xff]) << 16) |
+               (static_cast<uint32_t>(g_invSbox[s1 >> 24]) << 24)) ^
+                  dk[0]);
+    store32LE(output + 4,
+              (static_cast<uint32_t>(g_invSbox[s1 & 0xff]) |
+               (static_cast<uint32_t>(g_invSbox[(s0 >> 8) & 0xff]) << 8) |
+               (static_cast<uint32_t>(g_invSbox[(s3 >> 16) & 0xff]) << 16) |
+               (static_cast<uint32_t>(g_invSbox[s2 >> 24]) << 24)) ^
+                  dk[1]);
+    store32LE(output + 8,
+              (static_cast<uint32_t>(g_invSbox[s2 & 0xff]) |
+               (static_cast<uint32_t>(g_invSbox[(s1 >> 8) & 0xff]) << 8) |
+               (static_cast<uint32_t>(g_invSbox[(s0 >> 16) & 0xff]) << 16) |
+               (static_cast<uint32_t>(g_invSbox[s3 >> 24]) << 24)) ^
+                  dk[2]);
+    store32LE(output + 12,
+              (static_cast<uint32_t>(g_invSbox[s3 & 0xff]) |
+               (static_cast<uint32_t>(g_invSbox[(s2 >> 8) & 0xff]) << 8) |
+               (static_cast<uint32_t>(g_invSbox[(s1 >> 16) & 0xff]) << 16) |
+               (static_cast<uint32_t>(g_invSbox[s0 >> 24]) << 24)) ^
+                  dk[3]);
   }
 
   virtual bool cipherECB(const void *in, size_t inLength, void *out,
@@ -2390,18 +2443,18 @@ private:
     auto input = reinterpret_cast<const uint8_t *>(in);
     auto output = reinterpret_cast<uint8_t *>(out);
     for (; len >= 16; len -= 16, input += 16, output += 16) {
-      memcpy(output, input, 16);
-      cipher(output);
+      cipher(input, output);
     }
 
     // Padding
     if (len || Padding::PKCS7 == m_padding) {
+      alignas(16) uint8_t block[16];
       auto pad =
           Padding::Zeros == m_padding ? 0 : 16 - static_cast<uint8_t>(len);
-      memcpy(output, input, len);
-      memset(output + len, pad, 16 - len);
+      memcpy(block, input, len);
+      memset(block + len, pad, 16 - len);
 
-      cipher(output);
+      cipher(block, output);
     }
 
     return true;
@@ -2420,30 +2473,18 @@ private:
     auto output = reinterpret_cast<uint8_t *>(out);
     const auto *piv = m_iv;
     for (; len >= 16; len -= 16, input += 16, output += 16) {
-      auto out32 = reinterpret_cast<uint32_t *>(output);
-      auto in32 = reinterpret_cast<const uint32_t *>(input);
-      auto iv32 = reinterpret_cast<const uint32_t *>(piv);
-      out32[0] = in32[0] ^ iv32[0];
-      out32[1] = in32[1] ^ iv32[1];
-      out32[2] = in32[2] ^ iv32[2];
-      out32[3] = in32[3] ^ iv32[3];
-      cipher(output);
+      cipherXor(input, piv, output);
       piv = output;
     }
 
     // Padding
     if (len || Padding::PKCS7 == m_padding) {
+      alignas(16) uint8_t block[16];
       auto pad =
           Padding::Zeros == m_padding ? 0 : 16 - static_cast<uint8_t>(len);
-      uint8_t pos = 0;
-      for (; pos < len; ++pos) {
-        output[pos] = input[pos] ^ piv[pos];
-      }
-      for (; pos < 16; ++pos) {
-        output[pos] = static_cast<uint8_t>(pad ^ piv[pos]);
-      }
-
-      cipher(output);
+      memcpy(block, input, len);
+      memset(block + len, pad, 16 - len);
+      cipherXor(block, piv, output);
     }
 
     return true;
@@ -2458,9 +2499,9 @@ private:
 
     // Keep the first 64 bits fixed and increment only the final 64 bits. This
     // matches the AES-NI/VAES backends and the Intel-style counter layout.
-    uint64_t ctr_lo;
-    memcpy(&ctr_lo, m_iv + 8, 8);
-    ctr_lo = be64(ctr_lo);
+    uint64_t ctr_lo = load64BE(m_iv + 8);
+    const uint32_t ctr0 = load32LE(m_iv);
+    const uint32_t ctr1 = load32LE(m_iv + 4);
 
     alignas(16) uint8_t state[4 * Nb];
     int64_t len = inLength;
@@ -2468,19 +2509,14 @@ private:
     auto output = reinterpret_cast<uint8_t *>(out);
 
     for (; len > 0; len -= 16, input += 16, output += 16) {
-      uint64_t be_lo = be64(ctr_lo);
-      memcpy(state, m_iv, 8);
-      memcpy(state + 8, &be_lo, 8);
-      cipher(state);
+      cipherWords(ctr0, ctr1, byteSwap32(static_cast<uint32_t>(ctr_lo >> 32)),
+                  byteSwap32(static_cast<uint32_t>(ctr_lo)), state);
 
       if (len >= 16) {
-        auto st32 = reinterpret_cast<const uint32_t *>(state);
-        auto in32 = reinterpret_cast<const uint32_t *>(input);
-        auto out32 = reinterpret_cast<uint32_t *>(output);
-        out32[0] = st32[0] ^ in32[0];
-        out32[1] = st32[1] ^ in32[1];
-        out32[2] = st32[2] ^ in32[2];
-        out32[3] = st32[3] ^ in32[3];
+        store32LE(output, load32LE(state) ^ load32LE(input));
+        store32LE(output + 4, load32LE(state + 4) ^ load32LE(input + 4));
+        store32LE(output + 8, load32LE(state + 8) ^ load32LE(input + 8));
+        store32LE(output + 12, load32LE(state + 12) ^ load32LE(input + 12));
       } else {
         for (int64_t i = 0; i < len; ++i) {
           output[i] = state[i] ^ input[i];
@@ -2500,11 +2536,11 @@ private:
     }
 
     alignas(16) uint8_t state[4 * Nb];
-    auto input = reinterpret_cast<const uint8_t *>(in) + inLength - 16;
+    const auto *inputBase = reinterpret_cast<const uint8_t *>(in);
+    auto input = inputBase + inLength - 16;
 
     // sum padding length
-    memcpy(state, input, 16);
-    invCipher(state);
+    invCipher(input, state);
 
     uint8_t padLen;
     if (Padding::Zeros == m_padding) {
@@ -2529,12 +2565,13 @@ private:
 
     outLength = inLength - padLen;
     uint8_t endLen = padLen ? outLength % 16 : 16;
-    auto output = reinterpret_cast<uint8_t *>(out) + inLength - 16;
+    auto *outputBase = reinterpret_cast<uint8_t *>(out);
+    auto output = outputBase + inLength - 16;
     memcpy(output, state, endLen);
 
-    for (input -= 16, output -= 16; input >= in; input -= 16, output -= 16) {
-      memcpy(output, input, 16);
-      invCipher(output);
+    for (size_t offset = inLength - 16; offset != 0;) {
+      offset -= 16;
+      invCipher(inputBase + offset, outputBase + offset);
     }
 
     return true;
@@ -2547,16 +2584,17 @@ private:
     }
 
     alignas(16) uint8_t state[4 * Nb];
-    auto input = reinterpret_cast<const uint8_t *>(in) + inLength - 16;
+    const auto *inputBase = reinterpret_cast<const uint8_t *>(in);
+    auto input = inputBase + inLength - 16;
 
     // sum padding length
-    memcpy(state, input, 16);
-    invCipher(state);
+    invCipher(input, state);
 
-    const auto *piv = in != input ? input - 16 : m_iv;
-    for (uint8_t i = 0; i < 4 * Nb; ++i) {
-      state[i] ^= piv[i];
-    }
+    const auto *piv = inputBase != input ? input - 16 : m_iv;
+    store32LE(state, load32LE(state) ^ load32LE(piv));
+    store32LE(state + 4, load32LE(state + 4) ^ load32LE(piv + 4));
+    store32LE(state + 8, load32LE(state + 8) ^ load32LE(piv + 8));
+    store32LE(state + 12, load32LE(state + 12) ^ load32LE(piv + 12));
 
     uint8_t padLen;
     if (Padding::Zeros == m_padding) {
@@ -2581,17 +2619,20 @@ private:
 
     outLength = inLength - padLen;
     uint8_t endLen = padLen ? outLength % 16 : 16;
-    auto output = reinterpret_cast<uint8_t *>(out) + inLength - 16;
+    auto *outputBase = reinterpret_cast<uint8_t *>(out);
+    auto output = outputBase + inLength - 16;
     memcpy(output, state, endLen);
 
-    for (input -= 16, output -= 16; input >= in; input -= 16, output -= 16) {
-      memcpy(output, input, 16);
-      invCipher(output);
+    for (size_t offset = inLength - 16; offset != 0;) {
+      offset -= 16;
+      output = outputBase + offset;
+      invCipher(inputBase + offset, output);
 
-      piv = in != input ? input - 16 : m_iv;
-      for (uint8_t i = 0; i < 4 * Nb; ++i) {
-        output[i] ^= piv[i];
-      }
+      piv = offset ? inputBase + offset - 16 : m_iv;
+      store32LE(output, load32LE(output) ^ load32LE(piv));
+      store32LE(output + 4, load32LE(output + 4) ^ load32LE(piv + 4));
+      store32LE(output + 8, load32LE(output + 8) ^ load32LE(piv + 8));
+      store32LE(output + 12, load32LE(output + 12) ^ load32LE(piv + 12));
     }
 
     return true;
@@ -2606,11 +2647,10 @@ private:
 
   virtual Ptr Clone() const override { return Ptr(new WAesGen<N>(*this)); }
 
-  template <int>
-  friend Ptr WAes::Create(const void *, size_t, const void *, size_t, Padding);
-  template <int>
-  friend Ptr WAes::Create(Backend, const void *, size_t, const void *, size_t,
-                          Padding);
+  friend Ptr WAes::Create<N>(const void *, size_t, const void *, size_t,
+                             Padding);
+  friend Ptr WAes::Create<N>(Backend, const void *, size_t, const void *,
+                             size_t, Padding);
 };
 
 } // namespace detail
