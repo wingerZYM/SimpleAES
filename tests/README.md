@@ -53,6 +53,7 @@ out/
 Each standalone implementation tests:
 
 - 10 standard known-answer encryption/decryption vectors
+- 1 OpenSSL-compatible full-width CTR carry vector
 - 5 focused GCM behavior and failure tests
 - 450 deterministic round trips: 18 mode/key/padding configurations across
   25 boundary and multi-block lengths
@@ -60,10 +61,10 @@ Each standalone implementation tests:
 - A nonzero process exit code when any correctness check fails
 - All test targets compile with `-fno-exceptions`
 
-That gives 471 functional checks per standalone backend. The unified test also
+That gives 472 functional checks per standalone backend. The unified test also
 runs the same shared suite, directly cross-validates its available backends, and
-runs backend availability, guard-page, padding, in-place, unaligned-I/O, and CTR
-counter regressions.
+runs backend availability, guard-page, padding, in-place, unaligned-I/O,
+scoped-AAD restoration, and full-128-bit CTR counter regressions.
 
 ### AES Modes
 - **ECB Mode** - Electronic Codebook mode

@@ -210,6 +210,56 @@ inline void randomNonce(uint8_t nonce[WAesGCMNonceSize]) {
 
 } // namespace waes_gcm_detail
 
+namespace waes_ctr_detail {
+
+inline uint64_t load64BE(const uint8_t *input) noexcept {
+  uint64_t value = 0;
+  for (size_t i = 0; i < 8; ++i) {
+    value = (value << 8) | input[i];
+  }
+  return value;
+}
+
+inline bool requiresFullCarry(const uint8_t counter[16],
+                              size_t length) noexcept {
+  if (length == 0) {
+    return false;
+  }
+  const uint64_t lastBlockOffset = static_cast<uint64_t>((length - 1) / 16);
+  return lastBlockOffset >
+         (std::numeric_limits<uint64_t>::max)() - load64BE(counter + 8);
+}
+
+inline void increment128(uint8_t counter[16]) noexcept {
+  for (size_t i = 16; i != 0; --i) {
+    if (++counter[i - 1] != 0) {
+      break;
+    }
+  }
+}
+
+template <typename EncryptBlock>
+inline void cryptFullCarry(const uint8_t *input, size_t length, uint8_t *output,
+                           const uint8_t initialCounter[16],
+                           const EncryptBlock &encryptBlock) {
+  uint8_t counter[16];
+  memcpy(counter, initialCounter, sizeof(counter));
+  while (length != 0) {
+    uint8_t stream[16];
+    encryptBlock(counter, stream);
+    const size_t chunk = length < 16 ? length : 16;
+    for (size_t i = 0; i < chunk; ++i) {
+      output[i] = input[i] ^ stream[i];
+    }
+    increment128(counter);
+    input += chunk;
+    output += chunk;
+    length -= chunk;
+  }
+}
+
+} // namespace waes_ctr_detail
+
 namespace detail {
 
 // A class template keeps the header C++11-compatible and makes the static
@@ -836,7 +886,7 @@ public:
     }
   }
 
-  // Sets the counter value when in CBC mode.
+  // Sets the initialization vector when in CBC mode.
   // The maximum length is 16 byte, if not enough padding zero.
   void SetIV(const void *iv, size_t length) {
     m_mode = Mode::CBC;
@@ -844,7 +894,8 @@ public:
     memcpy(m_iv, iv, length > 16 ? 16 : length);
   }
 
-  // Sets the counter value when in CTR mode.
+  // Sets the counter block when in CTR mode. The complete 16-byte value is
+  // incremented as a big-endian integer modulo 2^128.
   // The maximum length is 16 byte, if not enough padding zero.
   void SetCounter(const void *counter, size_t length) {
     m_mode = Mode::CTR;
@@ -1325,8 +1376,19 @@ private:
       return false;
     }
 
-    // Keep the first 64 bits fixed and increment the final 64 bits as a
-    // big-endian integer, matching all hardware backends.
+    if (waes_ctr_detail::requiresFullCarry(m_iv, inLength)) {
+      waes_ctr_detail::cryptFullCarry(
+          reinterpret_cast<const uint8_t *>(in), inLength,
+          reinterpret_cast<uint8_t *>(out), m_iv,
+          [this](const uint8_t input[16], uint8_t output[16]) {
+            cipher(input, output);
+          });
+      outLength = inLength;
+      return true;
+    }
+
+    // The common path cannot carry into the upper 64 bits, so keep the
+    // existing optimized low-half counter loop.
     uint64_t ctr_lo = load64BE(m_iv + 8);
     const uint32_t ctr0 = load32LE(m_iv);
     const uint32_t ctr1 = load32LE(m_iv + 4);

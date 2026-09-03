@@ -205,7 +205,10 @@ Key lengths intentionally preserve the library's legacy compatibility behavior: 
 
 Zero padding adds bytes only when the final block is partial; an already block-aligned input does not gain another block. Because trailing plaintext zeroes are indistinguishable from padding, Zero-padding decryption removes trailing zeroes. PKCS7 always adds padding, including a complete 16-byte padding block for aligned input.
 
-CTR treats the supplied 16-byte value as a counter block: the first 8 bytes stay fixed and the final 8 bytes are incremented as a big-endian integer modulo 2^64. The numeric `SetCounter(iv, nonce, counter)` overload serializes all fields in big-endian order.
+CTR treats the supplied 16-byte value as one big-endian integer and increments
+the complete counter block modulo 2^128, matching OpenSSL's CTR convention. The
+numeric `SetCounter(iv, nonce, counter)` overload serializes all fields in
+big-endian order.
 
 ## Using the Unified Header (`WAes.hpp`)
 
@@ -254,7 +257,7 @@ for (auto b : WAes::CompiledBackends())
 auto aes = WAes::Create<256>(WAes::Backend::Generic, key, 32);
 ```
 
-RAII scope IV (restores original IV/mode on scope exit):
+RAII parameter scopes restore the previous value and mode on scope exit:
 
 ```c++
 {
@@ -262,7 +265,21 @@ RAII scope IV (restores original IV/mode on scope exit):
     aes->Cipher(...);   // uses tempIV
 }
 // back to original IV
+
+{
+    auto scope = aes->ScopeAAD(aad, aadLength);
+    if (!scope) {
+        // invalid AAD pointer/length
+    } else {
+        aes->CipherGCM(...); // uses the temporary AAD
+    }
+}
+// back to the previous AAD and mode
 ```
+
+`ScopeAAD(nullptr, 0)` selects empty AAD. `WithScopeAAD` is the callback form;
+its callback must return a value convertible to `bool`, is not invoked for
+invalid AAD arguments, and its Boolean result is returned to the caller.
 
 ## Compilation Requirements
 
@@ -343,16 +360,17 @@ header. See [`tests/README.md`](tests/README.md) for the full command reference.
 ### Test Features
 
 - **Known-answer tests**: 10 FIPS-197, NIST SP 800-38A, and SP 800-38D vectors
-  covering ECB, CBC, CTR, and GCM
+  covering ECB, CBC, CTR, and GCM, plus an OpenSSL-compatible full-width CTR
+  carry vector
 - **Focused GCM tests**: AAD, partial/empty messages, automatic nonces, exact
   in-place use, state transitions, and authenticate-before-write failures
 - **Deterministic matrix**: 18 mode/key/padding configurations across 25
   boundary and multi-block lengths (1 through 271 bytes), for 450 round trips
-- **Validation cases**: 6 malformed-PKCS7 rejection tests, giving 471
+- **Validation cases**: 6 malformed-PKCS7 rejection tests, giving 472
   functional checks per standalone backend
 - **Unified validation**: direct in-process comparison of every compiled and
-  executable backend, plus guard-page, padding, in-place, unaligned-I/O, and
-  CTR-counter regression tests
+  executable backend, plus guard-page, padding, in-place, unaligned-I/O,
+  scoped-AAD restoration, and full-128-bit CTR-counter carry regression tests
 - **Performance tests**: 1, 4, 16, and 64 KiB workloads plus a 100 MiB
   sustained-throughput benchmark; results are reported in MiB/s
 - **Custom deterministic parameters**: keys, IV, and counter can be supplied

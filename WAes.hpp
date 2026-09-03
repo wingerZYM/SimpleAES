@@ -278,6 +278,52 @@ inline void gcmIncrementCounter(uint8_t counter[16]) noexcept {
   }
 }
 
+inline uint64_t ctrLoad64BE(const uint8_t *input) noexcept {
+  uint64_t value = 0;
+  for (size_t i = 0; i < 8; ++i) {
+    value = (value << 8) | input[i];
+  }
+  return value;
+}
+
+inline bool ctrRequiresFullCarry(const uint8_t counter[16],
+                                 size_t length) noexcept {
+  if (length == 0) {
+    return false;
+  }
+  const uint64_t lastBlockOffset = static_cast<uint64_t>((length - 1) / 16);
+  return lastBlockOffset >
+         (std::numeric_limits<uint64_t>::max)() - ctrLoad64BE(counter + 8);
+}
+
+inline void ctrIncrement128(uint8_t counter[16]) noexcept {
+  for (size_t i = 16; i != 0; --i) {
+    if (++counter[i - 1] != 0) {
+      break;
+    }
+  }
+}
+
+template <typename EncryptBlock>
+inline void ctrCryptFullCarry(const uint8_t *input, size_t length,
+                              uint8_t *output, const uint8_t initialCounter[16],
+                              const EncryptBlock &encryptBlock) {
+  uint8_t counter[16];
+  std::memcpy(counter, initialCounter, sizeof(counter));
+  while (length != 0) {
+    uint8_t stream[16];
+    encryptBlock(counter, stream);
+    const size_t chunk = length < 16 ? length : 16;
+    for (size_t i = 0; i < chunk; ++i) {
+      output[i] = input[i] ^ stream[i];
+    }
+    ctrIncrement128(counter);
+    input += chunk;
+    output += chunk;
+    length -= chunk;
+  }
+}
+
 inline bool gcmTagsEqual(const uint8_t lhs[GCMTagSize],
                          const uint8_t rhs[GCMTagSize]) noexcept {
   uint8_t difference = 0;
@@ -346,6 +392,19 @@ protected:
 
   virtual void cipherGCMBlock(const uint8_t input[16],
                               uint8_t output[16]) const = 0;
+
+  bool cryptCTRFullCarryIfNeeded(const void *input, size_t length, void *output,
+                                 const uint8_t counter[16]) const {
+    if (!ctrRequiresFullCarry(counter, length)) {
+      return false;
+    }
+    ctrCryptFullCarry(reinterpret_cast<const uint8_t *>(input), length,
+                      reinterpret_cast<uint8_t *>(output), counter,
+                      [this](const uint8_t block[16], uint8_t stream[16]) {
+                        cipherGCMBlock(block, stream);
+                      });
+    return true;
+  }
 
   virtual void multiplyGCM(uint8_t value[16]) const {
     gcmMultiply4Bit(value, m_gcmTable);
@@ -463,6 +522,45 @@ private:
     tempIVScope &operator=(tempIVScope &&) = delete;
   };
 
+  class tempAADScope {
+  private:
+    Aes *m_pAes;
+    std::vector<uint8_t> m_aad;
+    Mode m_mode;
+
+  public:
+    tempAADScope(Aes *aes, const void *aad, size_t length)
+        : m_pAes(nullptr), m_mode(aes->m_mode) {
+      if ((length != 0 && aad == nullptr) || !gcmValidLengths(0, length)) {
+        return;
+      }
+
+      std::vector<uint8_t> next;
+      if (length != 0) {
+        const auto *bytes = reinterpret_cast<const uint8_t *>(aad);
+        next.assign(bytes, bytes + length);
+      }
+      m_aad.swap(aes->m_aad);
+      aes->m_aad.swap(next);
+      aes->m_mode = Mode::GCM;
+      m_pAes = aes;
+    }
+
+    ~tempAADScope() {
+      if (m_pAes != nullptr) {
+        m_pAes->m_mode = m_mode;
+        m_pAes->m_aad.swap(m_aad);
+      }
+    }
+
+    explicit operator bool() const noexcept { return m_pAes != nullptr; }
+
+    tempAADScope(const tempAADScope &) = delete;
+    tempAADScope &operator=(const tempAADScope &) = delete;
+    tempAADScope(tempAADScope &&) = delete;
+    tempAADScope &operator=(tempAADScope &&) = delete;
+  };
+
 public:
   virtual ~Aes() = default;
 
@@ -480,6 +578,14 @@ public:
 
   auto ScopeCounter(std::span<const uint8_t, 16> counter) {
     return tempIVScope(this, counter.data(), counter.size(), true);
+  }
+
+  auto ScopeAAD(const void *aad = nullptr, size_t length = 0) {
+    return tempAADScope(this, aad, length);
+  }
+
+  auto ScopeAAD(std::span<const uint8_t> aad) {
+    return tempAADScope(this, aad.data(), aad.size());
   }
 
   template <typename Func>
@@ -509,6 +615,18 @@ public:
                             std::forward<Func>(func));
   }
 
+  template <typename Func>
+  bool WithScopeAAD(const void *aad, size_t length, Func &&func) {
+    tempAADScope scope(this, aad, length);
+    return static_cast<bool>(scope) &&
+           static_cast<bool>(std::forward<Func>(func)());
+  }
+
+  template <typename Func>
+  bool WithScopeAAD(std::span<const uint8_t> aad, Func &&func) {
+    return WithScopeAAD(aad.data(), aad.size(), std::forward<Func>(func));
+  }
+
   size_t SumCipherLength(size_t nInLen) const {
     constexpr size_t blockSize = Nb * 4;
     if (m_mode == Mode::CTR || m_mode == Mode::GCM) {
@@ -530,8 +648,8 @@ public:
 
   void SetIV(std::span<const uint8_t, 16> iv) { SetIV(iv.data(), iv.size()); }
 
-  // Sets the counter block when in CTR mode. The first 8 bytes are fixed and
-  // the final 8 bytes are incremented as a big-endian integer modulo 2^64.
+  // Sets the counter block when in CTR mode. The complete 16-byte value is
+  // incremented as a big-endian integer modulo 2^128.
   // The maximum length is 16 bytes; shorter values are padded with zeroes.
   void SetCounter(const void *counter, size_t length) {
     m_mode = Mode::CTR;
@@ -1005,6 +1123,11 @@ private:
       return false;
     }
     outLength = inLength;
+
+    if (cryptCTRFullCarryIfNeeded(in, inLength, out,
+                                  reinterpret_cast<const uint8_t *>(&m_iv))) {
+      return true;
+    }
 
     static const uint64x2_t one = {0, 1};
     auto counter = vreinterpretq_u64_u8(vrev64q_u8(m_iv));
@@ -1607,6 +1730,11 @@ protected:
     }
     outLength = inLength;
 
+    if (cryptCTRFullCarryIfNeeded(in, inLength, out,
+                                  reinterpret_cast<const uint8_t *>(&m_iv))) {
+      return true;
+    }
+
     static const auto one = _mm_set_epi32(0, 1, 0, 0);
     static const auto bswap_epi64 =
         _mm_setr_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
@@ -1806,6 +1934,12 @@ private:
       return false;
     }
     outLength = inLength;
+
+    if (this->cryptCTRFullCarryIfNeeded(
+            in, inLength, out,
+            reinterpret_cast<const uint8_t *>(&this->m_iv))) {
+      return true;
+    }
 
     static const auto bswap_epi64 =
         _mm256_setr_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8,
@@ -2024,6 +2158,12 @@ private:
       return false;
     }
     outLength = inLength;
+
+    if (this->cryptCTRFullCarryIfNeeded(
+            in, inLength, out,
+            reinterpret_cast<const uint8_t *>(&this->m_iv))) {
+      return true;
+    }
 
     static const auto bswap_epi64 = _mm512_broadcast_i32x4(
         _mm_setr_epi8(7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8));
@@ -3008,8 +3148,12 @@ private:
     }
     outLength = inLength;
 
-    // Keep the first 64 bits fixed and increment only the final 64 bits. This
-    // matches the AES-NI/VAES backends and the Intel-style counter layout.
+    if (cryptCTRFullCarryIfNeeded(in, inLength, out, m_iv)) {
+      return true;
+    }
+
+    // The common path cannot carry into the upper 64 bits, so keep the
+    // existing optimized low-half counter loop.
     uint64_t ctr_lo = load64BE(m_iv + 8);
     const uint32_t ctr0 = load32LE(m_iv);
     const uint32_t ctr1 = load32LE(m_iv + 4);

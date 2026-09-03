@@ -183,7 +183,9 @@ if (!aes.InvCipher(ciphertext, cipherLen, plaintext, plainLen)) {
 
 Zero padding 只在尾块不足 16 字节时补零；输入已经按块对齐时不会额外增加一块。由于明文末尾的零与填充无法区分，Zero-padding 解密会移除尾部零。PKCS7 则始终添加填充，输入按块对齐时也会增加一个完整的 16 字节填充块。
 
-CTR 将传入的 16 字节值视为计数块：前 8 字节保持不变，后 8 字节按大端整数模 2^64 递增。数值重载 `SetCounter(iv, nonce, counter)` 会将三个字段都按大端序列化。
+CTR 将传入的 16 字节计数块整体视为一个大端整数，并按模 2^128 递增，
+与 OpenSSL 的 CTR 约定一致。数值重载 `SetCounter(iv, nonce, counter)`
+会将三个字段都按大端序列化。
 
 ## 使用统一头文件（`WAes.hpp`）
 
@@ -230,14 +232,27 @@ for (auto b : WAes::CompiledBackends())
 auto aes = WAes::Create<256>(WAes::Backend::Generic, key, 32);
 ```
 
-RAII 作用域 IV（离开作用域后自动恢复原始 IV/模式）：
+RAII 参数作用域会在离开作用域后恢复之前的值与模式：
 ```c++
 {
     auto scope = aes->ScopeIV(tempIV, 16);
     aes->Cipher(...);   // 使用 tempIV
 }
 // 已恢复原始 IV
+
+{
+    auto scope = aes->ScopeAAD(aad, aadLength);
+    if (!scope) {
+        // AAD 指针或长度无效
+    } else {
+        aes->CipherGCM(...); // 使用临时 AAD
+    }
+}
+// 已恢复之前的 AAD 和模式
 ```
+
+`ScopeAAD(nullptr, 0)` 表示空 AAD。`WithScopeAAD` 是回调形式；回调必须返回
+可转换为 `bool` 的值。AAD 参数无效时不会调用回调，其布尔结果会返回给调用方。
 
 ## 编译参数
 
@@ -309,14 +324,16 @@ SimpleAES 提供 AES 原语，以及刻意保持精简的一次性 GCM 接口。
 ### 测试功能
 
 - **标准答案测试**：10 个 FIPS-197、NIST SP 800-38A 和 SP 800-38D
-  向量，覆盖 ECB、CBC、CTR 和 GCM
+  向量，覆盖 ECB、CBC、CTR 和 GCM；另含一个与 OpenSSL 兼容的 CTR
+  完整进位向量
 - **GCM 专项测试**：AAD、部分块/空消息、自动 nonce、精确原地操作、模式切换，
   以及认证失败不写明文
 - **确定性组合测试**：18 种模式/密钥/填充配置乘以 25 种边界和多块长度
   （1～271 字节），共 450 次往返测试
-- **校验测试**：6 个非法 PKCS7 拒绝测试，因此每个独立后端共有 471 项功能检查
+- **校验测试**：6 个非法 PKCS7 拒绝测试，因此每个独立后端共有 472 项功能检查
 - **统一实现验证**：在同一进程中直接比较所有已编入且当前可执行的后端，并覆盖
-  guard page、填充、原地操作、非对齐 I/O 和 CTR 计数器回归测试
+  guard page、填充、原地操作、非对齐 I/O、作用域 AAD 恢复和 CTR 计数器
+  128 位完整进位回归测试
 - **性能测试**：1、4、16、64 KiB，以及 100 MiB 持续吞吐测试；结果使用 MiB/s
 - **自定义确定性参数**：可通过 `--custom-params` 指定密钥、IV 和 counter
 

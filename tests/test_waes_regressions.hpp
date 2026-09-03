@@ -80,6 +80,100 @@ private:
   size_t size_ = 0;
 };
 
+inline bool testScopedAAD(WAes::Backend backend) {
+  static constexpr std::array<uint8_t, 7> outerAAD = {0x6f, 0x75, 0x74, 0x65,
+                                                      0x72, 0x01, 0x02};
+  static constexpr std::array<uint8_t, 5> innerAAD = {0x69, 0x6e, 0x6e, 0x65,
+                                                      0x72};
+  static constexpr std::array<uint8_t, WAes::GCMNonceSize> nonce = {
+      0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe, 0x01, 0x23, 0x45, 0x67};
+  const auto plaintext = TestData::getTestData(31);
+  auto aes =
+      WAes::Create<128>(backend, TestData::AES128_KEY,
+                        TestData::AES128_KEY_SIZE, nullptr, 0, Padding::Zeros);
+  if (!aes) {
+    return false;
+  }
+  aes->SetIV(TestData::TEST_IV, TestData::IV_SIZE);
+
+  auto encrypt = [&](std::array<uint8_t, 31> &ciphertext,
+                     std::array<uint8_t, WAes::GCMTagSize> &tag) {
+    size_t ciphertextLength = ciphertext.size();
+    size_t tagLength = tag.size();
+    return aes->CipherGCM(plaintext.data(), plaintext.size(), ciphertext.data(),
+                          ciphertextLength, nonce.data(), nonce.size(),
+                          tag.data(), tagLength) &&
+           ciphertextLength == ciphertext.size() && tagLength == tag.size();
+  };
+
+  std::array<uint8_t, 31> outerCiphertext{};
+  std::array<uint8_t, WAes::GCMTagSize> outerTag{};
+  std::array<uint8_t, 31> innerCiphertext{};
+  std::array<uint8_t, WAes::GCMTagSize> innerTag{};
+  bool ok = true;
+  {
+    auto outer = aes->ScopeAAD(outerAAD.data(), outerAAD.size());
+    const bool outerEncrypted = encrypt(outerCiphertext, outerTag);
+    ok = static_cast<bool>(outer) && outerEncrypted;
+
+    {
+      auto inner = aes->ScopeAAD(std::span<const uint8_t>(innerAAD));
+      const bool innerEncrypted = encrypt(innerCiphertext, innerTag);
+      ok = ok && static_cast<bool>(inner) && innerEncrypted &&
+           innerCiphertext == outerCiphertext && innerTag != outerTag;
+    }
+
+    std::array<uint8_t, 31> restoredCiphertext{};
+    std::array<uint8_t, WAes::GCMTagSize> restoredTag{};
+    const bool restoredEncrypted = encrypt(restoredCiphertext, restoredTag);
+    ok = ok && restoredEncrypted && restoredCiphertext == outerCiphertext &&
+         restoredTag == outerTag;
+
+    auto invalid = aes->ScopeAAD(nullptr, 1);
+    std::array<uint8_t, 31> invalidCiphertext{};
+    std::array<uint8_t, WAes::GCMTagSize> invalidTag{};
+    const bool invalidEncrypted = encrypt(invalidCiphertext, invalidTag);
+    ok = ok && !static_cast<bool>(invalid) && invalidEncrypted &&
+         invalidCiphertext == outerCiphertext && invalidTag == outerTag;
+  }
+
+  std::array<uint8_t, 31> rejectedCiphertext{};
+  std::array<uint8_t, WAes::GCMTagSize> rejectedTag{};
+  size_t rejectedLength = rejectedCiphertext.size();
+  size_t rejectedTagLength = rejectedTag.size();
+  const bool restoredMode =
+      !aes->CipherGCM(plaintext.data(), plaintext.size(),
+                      rejectedCiphertext.data(), rejectedLength, nonce.data(),
+                      nonce.size(), rejectedTag.data(), rejectedTagLength) &&
+      rejectedLength == 0 && rejectedTagLength == 0;
+
+  bool invalidCallbackCalled = false;
+  const bool invalidWithResult = aes->WithScopeAAD(nullptr, 1, [&]() {
+    invalidCallbackCalled = true;
+    return true;
+  });
+
+  bool validCallbackCalled = false;
+  std::array<uint8_t, 31> withCiphertext{};
+  std::array<uint8_t, WAes::GCMTagSize> withTag{};
+  const bool validWithResult =
+      aes->WithScopeAAD(std::span<const uint8_t>(innerAAD), [&]() {
+        validCallbackCalled = true;
+        return encrypt(withCiphertext, withTag);
+      });
+
+  std::array<uint8_t, 32> cbcCiphertext{};
+  size_t cbcLength = cbcCiphertext.size();
+  const bool restoredCBC = aes->Cipher(plaintext.data(), plaintext.size(),
+                                       cbcCiphertext.data(), cbcLength) &&
+                           cbcLength == 32;
+
+  return ok && restoredMode && !invalidWithResult && !invalidCallbackCalled &&
+         validWithResult && validCallbackCalled &&
+         withCiphertext == innerCiphertext && withTag == innerTag &&
+         restoredCBC;
+}
+
 inline bool run() {
   using namespace TestData;
 
@@ -293,13 +387,14 @@ inline bool run() {
               ecb->Cipher(counterBlock.data(), counterBlock.size(),
                           expected.data() + block * 16, blockLength) &&
               blockLength == 16;
-      for (int i = 15; i >= 8; --i) {
+      for (int i = 15; i >= 0; --i) {
         if (++counterBlock[static_cast<size_t>(i)] != 0) {
           break;
         }
       }
     }
-    check(ctrOk && ctrCipher == expected, name + " CTR low-64 wrap policy");
+    check(ctrOk && ctrCipher == expected, name + " CTR full-128 carry policy");
+    check(testScopedAAD(backend), name + " scoped AAD state restoration");
   }
 
   std::array<uint8_t, 16> serializedCounter = {

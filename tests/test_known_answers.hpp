@@ -100,6 +100,43 @@ inline TestUtils::TestResult runGCMCase() {
   return {true, "NIST SP 800-38D known-answer vector"};
 }
 
+inline TestUtils::TestResult runCTRFullCarryCase() {
+  // This vector crosses the low-64-bit boundary. Its result matches OpenSSL's
+  // full 128-bit, big-endian CTR counter increment.
+  static constexpr uint8_t counter[16] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+                                          0x16, 0x17, 0xff, 0xff, 0xff, 0xff,
+                                          0xff, 0xff, 0xff, 0xfe};
+  static constexpr uint8_t expectedCiphertext[48] = {
+      0xcc, 0x17, 0x1e, 0x8a, 0xc4, 0x09, 0x4b, 0xc8, 0xea, 0xab, 0xf9, 0x9d,
+      0x8a, 0x1b, 0xcf, 0x0a, 0x24, 0xdc, 0xca, 0x34, 0xd1, 0x37, 0xa4, 0xc8,
+      0x8f, 0x7a, 0xa2, 0x69, 0x6e, 0x1d, 0x82, 0x2c, 0xbb, 0x2b, 0xe5, 0xd0,
+      0x41, 0xbd, 0x0a, 0xf4, 0x24, 0x7b, 0x3d, 0x36, 0x93, 0x91, 0xb1, 0x0e};
+  std::array<uint8_t, 48> plaintext{};
+  std::array<uint8_t, 48> ciphertext{};
+
+  CWAes128 aes(TestData::AES128_KEY, TestData::AES128_KEY_SIZE, nullptr, 0,
+               Padding::Zeros);
+  aes.SetCounter(counter, sizeof(counter));
+  size_t ciphertextLength = ciphertext.size();
+  if (!aes.Cipher(plaintext.data(), plaintext.size(), ciphertext.data(),
+                  ciphertextLength) ||
+      ciphertextLength != ciphertext.size() ||
+      std::memcmp(ciphertext.data(), expectedCiphertext, ciphertext.size()) !=
+          0) {
+    return {false, "full-width CTR carry mismatch"};
+  }
+
+  std::array<uint8_t, 48> recovered{};
+  size_t recoveredLength = recovered.size();
+  if (!aes.InvCipher(ciphertext.data(), ciphertext.size(), recovered.data(),
+                     recoveredLength) ||
+      recoveredLength != recovered.size() || recovered != plaintext) {
+    return {false, "full-width CTR carry decryption mismatch"};
+  }
+
+  return {true, "OpenSSL-compatible full-width CTR carry"};
+}
+
 inline TestUtils::TestSummary run(const std::string &implementationName) {
   // FIPS-197 Appendix C ECB vectors.
   static constexpr uint8_t ecbPlaintext[16] = {
@@ -186,6 +223,10 @@ inline TestUtils::TestSummary run(const std::string &implementationName) {
   const auto gcmResult = runGCMCase();
   TestUtils::printTestResult(gcmResult, implementationName + "-KAT-GCM-AES128");
   summary.addResult(gcmResult.success);
+  const auto ctrCarryResult = runCTRFullCarryCase();
+  TestUtils::printTestResult(ctrCarryResult,
+                             implementationName + "-CTR-CARRY-AES128");
+  summary.addResult(ctrCarryResult.success);
   return summary;
 }
 
