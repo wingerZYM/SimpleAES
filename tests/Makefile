@@ -1,11 +1,12 @@
 CXX = g++
-CXXFLAGS = -std=c++20 -O3 -Wall -Wextra
-CXX11FLAGS = -std=c++11 -O3 -Wall -Wextra
+CXXFLAGS = -std=c++20 -O3 -Wall -Wextra -fno-exceptions
+CXX11FLAGS = -std=c++11 -O3 -Wall -Wextra -fno-exceptions
 INCLUDES = -I..
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 
-AESNI_FLAGS = -mssse3 -maes
+PCLMUL_FLAGS =
+AESNI_FLAGS = -mssse3 -maes $(PCLMUL_FLAGS)
 VAES_FLAGS = $(AESNI_FLAGS) -mavx2 -mvaes
 VAES512_FLAGS = $(VAES_FLAGS) -mavx512f -mavx512bw -mavx512dq -mavx512vl
 ARM_CRYPTO_FLAGS = -march=native
@@ -25,6 +26,7 @@ NATIVE_DEFINES := $(shell echo | $(CXX) -march=native -dM -E - 2>/dev/null)
 # Build each standalone implementation with only the flags that it requires.
 # The unified test uses the strongest backend executable on this machine.
 AES_NI_SUPPORT = no
+PCLMUL_SUPPORT = no
 VAES_SUPPORT = no
 VAES512_SUPPORT = no
 ARM_CRYPTO_SUPPORT = no
@@ -33,6 +35,10 @@ TESTS = test_generic test_waes
 
 ifneq ($(filter x86_64 amd64,$(UNAME_M)),)
     PLATFORM = x86_64
+    ifneq ($(findstring __PCLMUL__,$(NATIVE_DEFINES)),)
+        PCLMUL_SUPPORT = yes
+        PCLMUL_FLAGS = -mpclmul
+    endif
     ifneq ($(findstring __AES__,$(NATIVE_DEFINES)),)
         ifneq ($(findstring __SSSE3__,$(NATIVE_DEFINES)),)
             AES_NI_SUPPORT = yes
@@ -64,7 +70,7 @@ ifneq ($(filter x86_64 amd64,$(UNAME_M)),)
     endif
 else ifneq ($(filter aarch64 arm64,$(UNAME_M)),)
     PLATFORM = arm64
-    ifneq ($(findstring __ARM_FEATURE_CRYPTO,$(NATIVE_DEFINES)),)
+    ifneq ($(strip $(findstring __ARM_FEATURE_CRYPTO,$(NATIVE_DEFINES))$(findstring __ARM_FEATURE_AES,$(NATIVE_DEFINES))),)
         ARM_CRYPTO_SUPPORT = yes
         TESTS += test_armv8
         WAES_TARGET_FLAGS = $(ARM_CRYPTO_FLAGS)
@@ -75,11 +81,24 @@ endif
 
 # Full paths of test binaries (derived from TESTS list)
 BINS = $(addprefix $(BINDIR)/, $(TESTS))
-BUILD_CHECKS = $(BINDIR)/test_generic_multitu
+BUILD_CHECKS = $(BINDIR)/test_generic_multitu $(BINDIR)/test_cxx11_gcm_generic
+ifeq ($(AES_NI_SUPPORT),yes)
+    BUILD_CHECKS += $(BINDIR)/test_cxx11_gcm_aes_ni
+endif
+ifeq ($(VAES_SUPPORT),yes)
+    BUILD_CHECKS += $(BINDIR)/test_cxx11_gcm_vaes
+endif
+ifeq ($(VAES512_SUPPORT),yes)
+    BUILD_CHECKS += $(BINDIR)/test_cxx11_gcm_vaes512
+endif
+ifeq ($(ARM_CRYPTO_SUPPORT),yes)
+    BUILD_CHECKS += $(BINDIR)/test_cxx11_gcm_armv8
+endif
 
 # Source files
 GENERIC_SRC = test_generic.cpp
 GENERIC_MULTITU_SRC = test_generic_multitu_main.cpp test_generic_multitu.cpp
+CXX11_GCM_SRC = test_cxx11_gcm.cpp
 AESNI_SRC = test_aes_ni.cpp
 VAES_SRC = test_vaes.cpp
 VAES512_SRC = test_vaes512.cpp
@@ -88,7 +107,7 @@ WAES_SRC = test_waes.cpp
 COMPARE_SRC = compare_implementations.cpp
 
 # Common dependencies
-COMMON_DEPS = test_data.hpp test_utils.hpp test_options.hpp test_known_answers.hpp test_template.hpp test_entry.hpp
+COMMON_DEPS = test_data.hpp test_utils.hpp test_options.hpp test_known_answers.hpp test_gcm.hpp test_template.hpp test_entry.hpp
 WAES_DEPS = test_waes_adapter.hpp test_waes_cross.hpp test_waes_regressions.hpp
 
 .PHONY: all clean check-platform run-all run-generic run-generic-multitu run-aes-ni run-vaes run-vaes512 run-armv8 run-waes cross-compare run-perf-all run-perf-generic run-perf-aes-ni run-perf-vaes run-perf-vaes512 run-perf-armv8 run-perf-waes compare cmp-specific report-generic report-aes-ni report-vaes report-vaes512 report-armv8 report-waes report-all sanitize sanitize-generic sanitize-waes
@@ -102,6 +121,7 @@ check-platform:
 	@echo "  Detected Platform: $(PLATFORM)"
 ifeq ($(PLATFORM),x86_64)
 	@echo "  AES-NI Support: $(AES_NI_SUPPORT)"
+	@echo "  PCLMUL Support: $(PCLMUL_SUPPORT)"
 	@echo "  VAES Support: $(VAES_SUPPORT)"
 	@echo "  VAES512 Support: $(VAES512_SUPPORT)"
 	@if [ "$(VAES512_SUPPORT)" = "yes" ]; then \
@@ -132,6 +152,26 @@ $(BINDIR)/test_generic: $(GENERIC_SRC) $(COMMON_DEPS) ../WAes-gen.hpp
 $(BINDIR)/test_generic_multitu: $(GENERIC_MULTITU_SRC) ../WAes-gen.hpp
 	@mkdir -p $(BINDIR)
 	$(CXX) $(CXX11FLAGS) $(INCLUDES) -o $@ $(GENERIC_MULTITU_SRC)
+
+$(BINDIR)/test_cxx11_gcm_generic: $(CXX11_GCM_SRC) ../WAes-gen.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) $(INCLUDES) -o $@ $(CXX11_GCM_SRC)
+
+$(BINDIR)/test_cxx11_gcm_aes_ni: $(CXX11_GCM_SRC) ../WAes-ni.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) $(AESNI_FLAGS) $(INCLUDES) -DWAES_TEST_AES_NI -o $@ $(CXX11_GCM_SRC)
+
+$(BINDIR)/test_cxx11_gcm_vaes: $(CXX11_GCM_SRC) ../WAes-vaes.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) $(VAES_FLAGS) $(INCLUDES) -DWAES_TEST_VAES -o $@ $(CXX11_GCM_SRC)
+
+$(BINDIR)/test_cxx11_gcm_vaes512: $(CXX11_GCM_SRC) ../WAes-vaes512.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) $(VAES512_FLAGS) $(INCLUDES) -DWAES_TEST_VAES512 -o $@ $(CXX11_GCM_SRC)
+
+$(BINDIR)/test_cxx11_gcm_armv8: $(CXX11_GCM_SRC) ../WAes-armv8.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) $(ARM_CRYPTO_FLAGS) $(INCLUDES) -DWAES_TEST_ARMV8 -o $@ $(CXX11_GCM_SRC)
 
 $(BINDIR)/test_aes_ni: $(AESNI_SRC) $(COMMON_DEPS) ../WAes-ni.hpp
 ifeq ($(AES_NI_SUPPORT),yes)
@@ -340,8 +380,9 @@ endif
 # the test executable's exit status through tail.
 quick-test: $(BINS) $(BUILD_CHECKS)
 	@echo "=== Quick Test ==="
-	@echo "Testing Generic C++11 multi-TU link..."
+	@echo "Testing Generic C++11 multi-TU link and GCM API..."
 	@./$(BINDIR)/test_generic_multitu
+	@./$(BINDIR)/test_cxx11_gcm_generic
 	@echo "Testing Generic implementation..."
 	@./$(BINDIR)/test_generic | tail -8
 ifeq ($(PLATFORM),x86_64)

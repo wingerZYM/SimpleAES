@@ -3,6 +3,7 @@
 #include "../WAes.hpp"
 #include "test_data.hpp"
 
+#include <array>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -29,36 +30,82 @@ public:
   }
 
   void setIV(const void *iv, size_t length) {
-    if (impl_)
+    if (impl_) {
       impl_->SetIV(iv, length);
+    }
   }
 
   void setCounter(const void *counter, size_t length) {
-    if (impl_)
+    if (impl_) {
       impl_->SetCounter(counter, length);
+    }
+  }
+
+  bool setAAD(const void *aad, size_t length) {
+    return impl_ && impl_->SetAAD(aad, length);
+  }
+
+  bool cipherGCM(const std::vector<uint8_t> &plaintext, const void *nonce,
+                 size_t nonceLength, std::vector<uint8_t> &ciphertext,
+                 std::array<uint8_t, WAes::GCMTagSize> &tag) const {
+    if (!impl_) {
+      return false;
+    }
+    ciphertext.resize(plaintext.size());
+    size_t outputLength = ciphertext.size();
+    size_t tagLength = tag.size();
+    if (!impl_->CipherGCM(plaintext.data(), plaintext.size(), ciphertext.data(),
+                          outputLength, nonce, nonceLength, tag.data(),
+                          tagLength)) {
+      return false;
+    }
+    ciphertext.resize(outputLength);
+    return true;
+  }
+
+  bool invCipherGCM(const std::vector<uint8_t> &ciphertext, const void *nonce,
+                    size_t nonceLength,
+                    const std::array<uint8_t, WAes::GCMTagSize> &tag,
+                    std::vector<uint8_t> &plaintext) const {
+    if (!impl_) {
+      return false;
+    }
+    plaintext.resize(ciphertext.size());
+    size_t outputLength = plaintext.size();
+    if (!impl_->InvCipherGCM(ciphertext.data(), ciphertext.size(),
+                             plaintext.data(), outputLength, nonce, nonceLength,
+                             tag.data(), tag.size())) {
+      return false;
+    }
+    plaintext.resize(outputLength);
+    return true;
   }
 
   std::vector<uint8_t> cipher(const std::vector<uint8_t> &plaintext) const {
-    if (!impl_)
+    if (!impl_) {
       return {};
+    }
     size_t outputLength = impl_->SumCipherLength(plaintext.size());
     std::vector<uint8_t> output(outputLength);
     if (!impl_->Cipher(plaintext.data(), plaintext.size(), output.data(),
-                       outputLength))
+                       outputLength)) {
       return {};
+    }
     output.resize(outputLength);
     return output;
   }
 
   std::vector<uint8_t> invCipher(const std::vector<uint8_t> &ciphertext,
                                  size_t plaintextLength) const {
-    if (!impl_)
+    if (!impl_) {
       return {};
+    }
     std::vector<uint8_t> output(plaintextLength);
     size_t outputLength = output.size();
     if (!impl_->InvCipher(ciphertext.data(), ciphertext.size(), output.data(),
-                          outputLength))
+                          outputLength)) {
       return {};
+    }
     output.resize(outputLength);
     return output;
   }
@@ -74,8 +121,9 @@ inline bool run() {
   }
 
   std::cout << "\n=== WAes Cross-Backend Validation ===\nBackends:";
-  for (auto backend : backends)
+  for (auto backend : backends) {
     std::cout << ' ' << WAes::GetImplName(backend);
+  }
   std::cout << "\n\n";
 
   struct KeyCase {
@@ -91,10 +139,15 @@ inline bool run() {
     const char *name;
     bool usesIV;
     bool usesCounter;
+    bool usesGCM;
   };
-  const ModeCase modes[] = {{"ECB", false, false},
-                            {"CBC", true, false},
-                            {"CTR", false, true}};
+  const ModeCase modes[] = {{"ECB", false, false, false},
+                            {"CBC", true, false, false},
+                            {"CTR", false, true, false},
+                            {"GCM", false, false, true}};
+  static constexpr uint8_t gcmAAD[] = {0x63, 0x72, 0x6f, 0x73, 0x73};
+  static constexpr uint8_t gcmNonce[WAes::GCMNonceSize] = {
+      0x40, 0x51, 0x62, 0x73, 0x84, 0x95, 0xa6, 0xb7, 0xc8, 0xd9, 0xea, 0xfb};
 
   int passed = 0;
   int failed = 0;
@@ -102,37 +155,51 @@ inline bool run() {
 
   for (const auto &keyCase : keys) {
     for (const auto &mode : modes) {
-      const int paddingCount = mode.usesCounter ? 1 : 2;
+      const int paddingCount = (mode.usesCounter || mode.usesGCM) ? 1 : 2;
       for (int paddingIndex = 0; paddingIndex < paddingCount; ++paddingIndex) {
         const Padding padding =
             paddingIndex == 0 ? Padding::PKCS7 : Padding::Zeros;
         const char *paddingName =
-            mode.usesCounter ? "NoPad"
-                             : (padding == Padding::PKCS7 ? "PKCS7" : "Zeros");
-        const std::string label =
-            std::string(mode.name) + '-' + std::to_string(keyCase.bits) + '-' +
-            paddingName;
+            (mode.usesCounter || mode.usesGCM)
+                ? "NoPad"
+                : (padding == Padding::PKCS7 ? "PKCS7" : "Zeros");
+        const std::string label = std::string(mode.name) + '-' +
+                                  std::to_string(keyCase.bits) + '-' +
+                                  paddingName;
         int groupPassed = 0;
         int groupFailed = 0;
 
         for (size_t dataSize : TEST_SIZES) {
           const auto plaintext = getTestData(dataSize);
           auto configure = [&](AesProxy &aes) {
-            if (mode.usesIV)
+            if (mode.usesIV) {
               aes.setIV(TEST_IV, IV_SIZE);
-            if (mode.usesCounter)
+            }
+            if (mode.usesCounter) {
               aes.setCounter(TEST_COUNTER, COUNTER_SIZE);
+            }
+            if (mode.usesGCM) {
+              aes.setAAD(gcmAAD, sizeof(gcmAAD));
+            }
           };
 
           AesProxy referenceAes(reference, keyCase.bits, keyCase.key,
                                 keyCase.length, padding);
           configure(referenceAes);
-          const auto referenceCiphertext = referenceAes.cipher(plaintext);
-          bool ok = !referenceCiphertext.empty();
+          std::vector<uint8_t> referenceCiphertext;
+          std::array<uint8_t, WAes::GCMTagSize> referenceTag{};
+          const bool referenceEncrypted =
+              mode.usesGCM
+                  ? referenceAes.cipherGCM(plaintext, gcmNonce,
+                                           sizeof(gcmNonce),
+                                           referenceCiphertext, referenceTag)
+                  : !(referenceCiphertext = referenceAes.cipher(plaintext))
+                         .empty();
+          bool ok = referenceEncrypted;
 
           if (!ok) {
-            std::cout << "[FAIL] " << label << " (" << dataSize << " bytes): "
-                      << WAes::GetImplName(reference)
+            std::cout << "[FAIL] " << label << " (" << dataSize
+                      << " bytes): " << WAes::GetImplName(reference)
                       << " encryption failed\n";
           }
 
@@ -140,7 +207,14 @@ inline bool run() {
             AesProxy aes(backends[i], keyCase.bits, keyCase.key, keyCase.length,
                          padding);
             configure(aes);
-            if (aes.cipher(plaintext) != referenceCiphertext) {
+            std::vector<uint8_t> ciphertext;
+            std::array<uint8_t, WAes::GCMTagSize> tag{};
+            const bool encrypted =
+                mode.usesGCM ? aes.cipherGCM(plaintext, gcmNonce,
+                                             sizeof(gcmNonce), ciphertext, tag)
+                             : !(ciphertext = aes.cipher(plaintext)).empty();
+            if (!encrypted || ciphertext != referenceCiphertext ||
+                (mode.usesGCM && tag != referenceTag)) {
               std::cout << "[FAIL] " << label << " (" << dataSize
                         << " bytes): cipher mismatch — "
                         << WAes::GetImplName(backends[i]) << " differs from "
@@ -154,7 +228,15 @@ inline bool run() {
               AesProxy aes(backend, keyCase.bits, keyCase.key, keyCase.length,
                            padding);
               configure(aes);
-              if (aes.invCipher(referenceCiphertext, dataSize) != plaintext) {
+              std::vector<uint8_t> recovered;
+              const bool decrypted =
+                  mode.usesGCM
+                      ? aes.invCipherGCM(referenceCiphertext, gcmNonce,
+                                         sizeof(gcmNonce), referenceTag,
+                                         recovered)
+                      : (recovered = aes.invCipher(referenceCiphertext,
+                                                   dataSize)) == plaintext;
+              if (!decrypted || recovered != plaintext) {
                 std::cout << "[FAIL] " << label << " (" << dataSize
                           << " bytes): decrypt mismatch — "
                           << WAes::GetImplName(backend) << '\n';
@@ -168,9 +250,10 @@ inline bool run() {
 
         passed += groupPassed;
         failed += groupFailed;
-        if (groupFailed == 0)
+        if (groupFailed == 0) {
           std::cout << "[OK] " << label << ": " << groupPassed
                     << " sizes passed\n";
+        }
       }
     }
   }

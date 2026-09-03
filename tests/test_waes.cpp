@@ -21,16 +21,18 @@ bool runBackend(WAes::Backend backend, const TestOptions &options) {
   std::cout << "AES Library Test Suite - " << implementationName << '\n'
             << "===============================================\n";
 
-  if (options.runPerformance)
+  if (options.runPerformance) {
     return runPerformanceTests(implementationName, options);
+  }
   return runImplementationTests(implementationName, options).success();
 }
 
 bool parseBackend(int argc, char *argv[], WAes::Backend &backend,
                   bool &hasForcedBackend) {
   for (int i = 1; i < argc; ++i) {
-    if (std::string(argv[i]) != "--backend")
+    if (std::string(argv[i]) != "--backend") {
       continue;
+    }
     if (i + 1 >= argc) {
       std::cerr << "Missing value after --backend\n";
       return false;
@@ -48,8 +50,9 @@ bool parseBackend(int argc, char *argv[], WAes::Backend &backend,
     if (!hasForcedBackend) {
       std::cerr << "Unknown or unavailable backend: " << requested
                 << "\nAvailable:";
-      for (auto available : WAes::AvailableBackends())
+      for (auto available : WAes::AvailableBackends()) {
         std::cerr << ' ' << WAes::GetImplName(available);
+      }
       std::cerr << '\n';
       return false;
     }
@@ -61,8 +64,9 @@ bool parseBackend(int argc, char *argv[], WAes::Backend &backend,
 
 int main(int argc, char *argv[]) {
   const TestOptions options = parseTestOptions(argc, argv);
-  if (!options.valid)
+  if (!options.valid) {
     return 2;
+  }
   if (options.showHelp) {
     printTestHelp(argv[0]);
     std::cout
@@ -72,8 +76,9 @@ int main(int argc, char *argv[]) {
 
   WAes::Backend forcedBackend = WAes::Backend::Auto;
   bool hasForcedBackend = false;
-  if (!parseBackend(argc, argv, forcedBackend, hasForcedBackend))
+  if (!parseBackend(argc, argv, forcedBackend, hasForcedBackend)) {
     return 2;
+  }
 
   bool successful = true;
   if (hasForcedBackend) {
@@ -85,11 +90,13 @@ int main(int argc, char *argv[]) {
       successful = runBackend(backend, options) && successful;
       std::cout << '\n';
     }
-    if (!options.runPerformance)
+    if (!options.runPerformance) {
       successful = WAesCrossTests::run() && successful;
+    }
   }
 
-  if (!options.runPerformance)
+  if (!options.runPerformance) {
     successful = WAesRegressionTests::run() && successful;
+  }
   return successful ? 0 : 1;
 }

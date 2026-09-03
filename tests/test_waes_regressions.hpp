@@ -29,8 +29,9 @@ public:
     pageSize_ = info.dwPageSize;
     base_ = static_cast<uint8_t *>(VirtualAlloc(
         nullptr, pageSize_ * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-    if (!base_)
+    if (!base_) {
       return;
+    }
 
     DWORD oldProtection = 0;
     if (!VirtualProtect(base_ + pageSize_, pageSize_, PAGE_NOACCESS,
@@ -40,13 +41,15 @@ public:
     }
 #else
     const long pageSize = sysconf(_SC_PAGESIZE);
-    if (pageSize <= 0)
+    if (pageSize <= 0) {
       return;
+    }
     pageSize_ = static_cast<size_t>(pageSize);
     void *allocation = mmap(nullptr, pageSize_ * 2, PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (allocation == MAP_FAILED)
+    if (allocation == MAP_FAILED) {
       return;
+    }
     base_ = static_cast<uint8_t *>(allocation);
     if (mprotect(base_ + pageSize_, pageSize_, PROT_NONE) != 0) {
       munmap(base_, pageSize_ * 2);
@@ -56,8 +59,9 @@ public:
   }
 
   ~GuardedBytes() {
-    if (!base_)
+    if (!base_) {
       return;
+    }
 #if defined(_WIN32)
     VirtualFree(base_, 0, MEM_RELEASE);
 #else
@@ -156,21 +160,24 @@ inline bool run() {
       auto encryptor = WAes::Create<128>(backend, AES128_KEY, AES128_KEY_SIZE,
                                          nullptr, 0, Padding::PKCS7);
       bool shortCbcOk = static_cast<bool>(encryptor);
-      if (encryptor)
+      if (encryptor) {
         encryptor->SetIV(TEST_IV, IV_SIZE);
+      }
       outputLength = 16;
       shortCbcOk = shortCbcOk &&
                    encryptor->Cipher(guardedByte.data(), 1, output.data(),
                                      outputLength) &&
                    outputLength == 16;
-      if (shortCbcOk)
+      if (shortCbcOk) {
         std::memcpy(guardedCiphertext.data(), output.data(), 16);
+      }
 
       auto decryptor = WAes::Create<128>(backend, AES128_KEY, AES128_KEY_SIZE,
                                          nullptr, 0, Padding::PKCS7);
       shortCbcOk = shortCbcOk && static_cast<bool>(decryptor);
-      if (decryptor)
+      if (decryptor) {
         decryptor->SetIV(TEST_IV, IV_SIZE);
+      }
       outputLength = output.size();
       shortCbcOk = shortCbcOk &&
                    decryptor->InvCipher(guardedCiphertext.data(), 16,
@@ -205,8 +212,9 @@ inline bool run() {
     auto cbcEncrypt = WAes::Create<128>(backend, AES128_KEY, AES128_KEY_SIZE,
                                         nullptr, 0, Padding::PKCS7);
     bool inplaceOk = static_cast<bool>(cbcEncrypt);
-    if (cbcEncrypt)
+    if (cbcEncrypt) {
       cbcEncrypt->SetIV(TEST_IV, IV_SIZE);
+    }
     std::vector<uint8_t> inplaceBuffer(
         cbcEncrypt ? cbcEncrypt->SumCipherLength(inplacePlaintext.size()) : 0);
     size_t inplaceLength = inplaceBuffer.size();
@@ -218,8 +226,9 @@ inline bool run() {
     auto cbcDecrypt = WAes::Create<128>(backend, AES128_KEY, AES128_KEY_SIZE,
                                         nullptr, 0, Padding::PKCS7);
     inplaceOk = inplaceOk && static_cast<bool>(cbcDecrypt);
-    if (cbcDecrypt)
+    if (cbcDecrypt) {
       cbcDecrypt->SetIV(TEST_IV, IV_SIZE);
+    }
     size_t decryptedLength = inplaceLength;
     inplaceOk = inplaceOk &&
                 cbcDecrypt->InvCipher(inplaceBuffer.data(), inplaceLength,
@@ -266,8 +275,9 @@ inline bool run() {
 
     auto ctr = WAes::Create<128>(backend, AES128_KEY, AES128_KEY_SIZE);
     bool ctrOk = static_cast<bool>(ctr);
-    if (ctr)
+    if (ctr) {
       ctr->SetCounter(counter.data(), counter.size());
+    }
     size_t ctrLength = ctrCipher.size();
     ctrOk = ctrOk &&
             ctr->Cipher(zeroInput.data(), zeroInput.size(), ctrCipher.data(),
@@ -284,8 +294,9 @@ inline bool run() {
                           expected.data() + block * 16, blockLength) &&
               blockLength == 16;
       for (int i = 15; i >= 8; --i) {
-        if (++counterBlock[static_cast<size_t>(i)] != 0)
+        if (++counterBlock[static_cast<size_t>(i)] != 0) {
           break;
+        }
       }
     }
     check(ctrOk && ctrCipher == expected, name + " CTR low-64 wrap policy");
@@ -302,11 +313,13 @@ inline bool run() {
   auto bytes =
       WAes::Create<128>(WAes::Backend::Generic, AES128_KEY, AES128_KEY_SIZE);
   bool numericOk = numeric && bytes;
-  if (numeric)
+  if (numeric) {
     numeric->SetCounter(UINT64_C(0x0001020304050607), UINT32_C(0x08090a0b),
                         UINT32_C(0x0c0d0e0f));
-  if (bytes)
+  }
+  if (bytes) {
     bytes->SetCounter(serializedCounter.data(), serializedCounter.size());
+  }
   size_t numericLength = numericOutput.size();
   size_t byteLength = byteOutput.size();
   numericOk = numericOk &&

@@ -22,13 +22,13 @@ The library offers two approaches -- **standalone single-backend headers** and a
 
 Each `WAes-*.hpp` is a complete, self-contained AES implementation targeting a specific instruction set. Include one header, get one backend -- no abstraction overhead, no runtime dispatch.
 
-| Header | Backend | Required Flags |
-|--------|---------|----------------|
-| `WAes-gen.hpp` | Pure C++ (Generic) | None (C++11) |
-| `WAes-ni.hpp` | Intel AES-NI | `-mssse3 -maes` |
-| `WAes-vaes.hpp` | Intel VAES (AVX2) | `-mavx2 -maes -mvaes` |
-| `WAes-vaes512.hpp` | Intel VAES (AVX512) | `-mavx512f -mavx512bw -mavx512dq -mavx512vl -maes -mvaes` |
-| `WAes-armv8.hpp` | ARMv8-A Crypto | `-march=armv8-a+crypto` |
+| Header | Backend |
+|--------|---------|
+| `WAes-gen.hpp` | Pure C++ (Generic) |
+| `WAes-ni.hpp` | Intel AES-NI |
+| `WAes-vaes.hpp` | Intel VAES (AVX2) |
+| `WAes-vaes512.hpp` | Intel VAES (AVX512) |
+| `WAes-armv8.hpp` | ARMv8-A Crypto |
 
 **Best for**: Server-side programs and embedded systems where the target platform is known at build time. You pick the fastest backend your hardware supports and compile directly against it -- zero indirection, maximum performance.
 
@@ -56,8 +56,8 @@ For bulk operations, the unified version normally performs close to the selected
 
 ### Performance Expectations
 
-For sufficiently large inputs on parallelizable paths such as ECB, CTR, and
-CBC decryption, the usual trend is:
+For sufficiently large inputs on parallelizable paths such as ECB, CTR, GCM,
+and CBC decryption, the usual trend is:
 
 ```text
 Generic < AES-NI < VAES (AVX2) < VAES512 (AVX512)
@@ -75,7 +75,7 @@ All standalone headers share the same public `CWAes<N>` interface. The unified `
 The library was designed with the principles of simplicity, ease of use, **sufficiency**, efficiency, and no external dependencies. Therefore, instead of supporting all encryption modes, it focuses only on the most commonly used ones to meet the needs of most real-world and testing scenarios with minimal implementation. Specifically, it supports:
 
 * 128, 192, and 256-bit key lengths
-* ECB, CBC, and CTR encryption modes
+* ECB, CBC, CTR, and authenticated GCM encryption modes
 * Zero and PKCS7 padding schemes
 
 These combinations are currently sufficient for all of my own production and testing environments.
@@ -124,6 +124,55 @@ CWAes128 ctr(key, 16);
 ctr.SetCounter(iv, 16); // Set counter and switch to CTR mode.
 ```
 
+Use AES-128-GCM with a caller-managed nonce:
+
+```c++
+const uint8_t nonce[WAesGCMNonceSize] = {/* exactly 12 bytes */};
+const uint8_t aad[] = {/* authenticated, but not encrypted */};
+uint8_t tag[WAesGCMTagSize];
+
+CWAes128 gcm(key, 16);
+gcm.SetAAD(aad, sizeof(aad)); // Copies AAD and switches to GCM mode.
+
+size_t cipherLen = dataLen;
+size_t tagLen = sizeof(tag);
+if (!gcm.CipherGCM(data, dataLen, ciphertext, cipherLen,
+                   nonce, sizeof(nonce), tag, tagLen)) {
+    // invalid arguments or insufficient output/tag capacity
+}
+
+size_t plainLen = dataLen;
+if (!gcm.InvCipherGCM(ciphertext, cipherLen, plaintext, plainLen,
+                      nonce, sizeof(nonce), tag, tagLen)) {
+    // authentication failed; plaintext was not written
+}
+```
+
+For convenience, the encryption overload taking `GCMResult` generates and
+returns a nonce together with the tag:
+
+```c++
+GCMResult result;
+size_t cipherLen = dataLen;
+gcm.CipherGCM(data, dataLen, ciphertext, cipherLen, result);
+```
+
+GCM is intentionally a strict, one-shot profile: the nonce is exactly 12
+bytes, the detached tag is exactly 16 bytes, and padding is ignored. Calling
+`SetAAD(nullptr, 0)` selects GCM with empty AAD. `SetIV` and `SetCounter`
+switch back to CBC and CTR respectively; while GCM is selected, the legacy
+`Cipher`/`InvCipher` calls fail because those signatures cannot carry a nonce
+and tag. Exact in-place input/output is supported; other overlapping buffer
+layouts are unsupported. A payload is limited to 2^36 - 32 bytes, and the AAD
+length must not exceed floor((2^64 - 1) / 8) bytes.
+
+AAD may be reused and is copied by `SetAAD`; the nonce must never repeat with
+the same key. The automatic overload uses a thread-local `std::mt19937` seeded
+from `std::random_device`. It is a minimal convenience source, not a guarantee
+of cryptographic randomness or uniqueness. Use the explicit-nonce overload
+when nonce allocation must follow a stronger application protocol, and keep
+automatic-nonce invocations well below 2^32 messages per key.
+
 Encryption:
 
 ```c++
@@ -161,6 +210,9 @@ CTR treats the supplied 16-byte value as a counter block: the first 8 bytes stay
 ## Using the Unified Header (`WAes.hpp`)
 
 `WAes.hpp` provides the same operations through a polymorphic interface with extra convenience features:
+
+The GCM API is identical, with `GCMResult`, `GCMNonceSize`, and `GCMTagSize`
+declared in the `WAes` namespace.
 
 ```c++
 #include "WAes.hpp"
@@ -219,12 +271,17 @@ RAII scope IV (restores original IV/mode on scope exit):
 | Header | Required Flags |
 |--------|---------------|
 | `WAes-gen.hpp` | None (C++11) |
-| `WAes-ni.hpp` | `-mssse3 -maes` |
-| `WAes-vaes.hpp` | `-mavx2 -maes -mvaes` |
-| `WAes-vaes512.hpp` | `-mavx512f -mavx512bw -mavx512dq -mavx512vl -maes -mvaes` |
+| `WAes-ni.hpp` | `-mssse3 -maes`; add `-mpclmul` for accelerated GCM |
+| `WAes-vaes.hpp` | `-mavx2 -maes -mvaes`; add `-mpclmul` for accelerated GCM |
+| `WAes-vaes512.hpp` | `-mavx512f -mavx512bw -mavx512dq -mavx512vl -maes -mvaes`; add `-mpclmul` for accelerated GCM |
 | `WAes-armv8.hpp` | `-march=armv8-a+crypto` (Linux/macOS ARM64) |
 
 All standalone variants require at least `-std=c++11`; `-std=c++17 -O3` is recommended.
+The headers contain no exception-handling syntax and can be compiled with
+`-fno-exceptions`. In such builds, allocation failures from AAD/container
+storage and failures inside the standard `std::random_device` implementation
+follow the host standard library's no-exception failure policy; they are not
+converted into a `false` return value.
 
 ### Unified Header (`WAes.hpp`)
 
@@ -240,18 +297,22 @@ c++ -std=c++20 -O3 -march=armv8-a+crypto WAes_example.cpp
 
 On GCC and Clang, instruction-set flags apply to the translation unit as a whole. A build made with `-march=native` is intended for that CPU class and must not be assumed to run on older x86 processors. Compile without AES/VAES target flags for a baseline Generic-only binary. MSVC builds include the x86 hardware implementations and use CPUID plus XGETBV at runtime; `AvailableBackends()` returns only implementations executable by both the current CPU and OS.
 
-On AArch64, the unified header enables the ARM crypto backend only when `__ARM_FEATURE_CRYPTO` is defined. A toolchain that does not expose that macro may define `WAES_ASSUME_ARM_CRYPTO`, but only when deployment hardware is guaranteed to implement the extension.
+On AArch64, the unified header enables the ARM crypto backend when the compiler
+exposes `__ARM_FEATURE_AES` or `__ARM_FEATURE_CRYPTO`. PMULL accelerates GCM
+when the crypto feature macro is available. A toolchain that exposes neither
+macro may define `WAES_ASSUME_ARM_CRYPTO`, but only when deployment hardware is
+guaranteed to implement the extension.
 
 ## Security Considerations
 
-SimpleAES provides AES primitives and traditional confidentiality modes; it is
-not a complete authenticated-encryption protocol.
+SimpleAES provides AES primitives plus a deliberately small, one-shot GCM API.
 
 - ECB reveals repeated-block patterns and is generally unsuitable for ordinary
   application data.
 - CBC and CTR do not authenticate ciphertext. Pair them with a correctly
-  designed MAC, or prefer an authenticated-encryption construction when one is
-  available.
+  designed MAC, or prefer GCM for new message encryption.
+- GCM nonces must never repeat under the same key. Authentication failure is
+  reported as `false` and leaves the plaintext output untouched.
 - CBC IVs must be unpredictable. A CTR counter/nonce must never be reused with
   the same key.
 - The Generic backend uses key-dependent T-table lookups for speed and is not
@@ -269,10 +330,10 @@ header. See [`tests/README.md`](tests/README.md) for the full command reference.
 ### Test Components
 
 - **Shared infrastructure**: `test_data.hpp`, `test_utils.hpp`,
-  `test_options.hpp`, `test_known_answers.hpp`, `test_template.hpp`, and
-  `test_entry.hpp`
+  `test_options.hpp`, `test_known_answers.hpp`, `test_gcm.hpp`,
+  `test_template.hpp`, and `test_entry.hpp`
 - **Standalone tests**: `test_generic.cpp`, `test_generic_multitu_main.cpp`,
-  `test_generic_multitu.cpp`, `test_aes_ni.cpp`, `test_vaes.cpp`,
+  `test_generic_multitu.cpp`, `test_cxx11_gcm.cpp`, `test_aes_ni.cpp`, `test_vaes.cpp`,
   `test_vaes512.cpp`, and `test_armv8.cpp`
 - **Unified tests**: `test_waes.cpp`, `test_waes_adapter.hpp`,
   `test_waes_cross.hpp`, and `test_waes_regressions.hpp`
@@ -281,11 +342,13 @@ header. See [`tests/README.md`](tests/README.md) for the full command reference.
 
 ### Test Features
 
-- **Known-answer tests**: 9 FIPS-197 and NIST SP 800-38A vectors covering
-  ECB, CBC, and CTR with 128/192/256-bit keys
-- **Deterministic matrix**: 15 mode/key/padding configurations across 25
-  boundary and multi-block lengths (1 through 271 bytes), for 375 round trips
-- **Validation cases**: 6 malformed-PKCS7 rejection tests, giving 390
+- **Known-answer tests**: 10 FIPS-197, NIST SP 800-38A, and SP 800-38D vectors
+  covering ECB, CBC, CTR, and GCM
+- **Focused GCM tests**: AAD, partial/empty messages, automatic nonces, exact
+  in-place use, state transitions, and authenticate-before-write failures
+- **Deterministic matrix**: 18 mode/key/padding configurations across 25
+  boundary and multi-block lengths (1 through 271 bytes), for 450 round trips
+- **Validation cases**: 6 malformed-PKCS7 rejection tests, giving 471
   functional checks per standalone backend
 - **Unified validation**: direct in-process comparison of every compiled and
   executable backend, plus guard-page, padding, in-place, unaligned-I/O, and
@@ -346,7 +409,7 @@ make sanitize        # Run Generic and baseline WAes with ASan/UBSan
 ```
 
 `make cross-compare` auto-detects `Generic`, `WAes`, and any supported hardware
-backends. It compares the 375 deterministic matrix records. The exact backend
+backends. It compares the 450 deterministic matrix records. The exact backend
 list is platform- and compiler-dependent.
 
 ## Compatibility Information

@@ -272,8 +272,9 @@ public:
         std::cout << "[SKIP] " << test_id << " - Missing in: ";
         bool first = true;
         for (const auto &missing : missing_impls) {
-          if (!first)
+          if (!first) {
             std::cout << ", ";
+          }
           std::cout << missing;
           first = false;
         }
@@ -357,8 +358,9 @@ public:
 
     std::cout << "Implementations tested: ";
     for (size_t i = 0; i < impls.size(); ++i) {
-      if (i > 0)
+      if (i > 0) {
         std::cout << ", ";
+      }
       std::cout << impls[i];
     }
     std::cout << "\n";
@@ -391,8 +393,9 @@ public:
 
       report << "Implementations tested: ";
       for (size_t i = 0; i < impls.size(); ++i) {
-        if (i > 0)
+        if (i > 0) {
           report << ", ";
+        }
         report << impls[i];
       }
       report << "\n";
@@ -465,8 +468,9 @@ public:
     FILE *pipe = popen(command.c_str(), "r");
 #endif
 
-    if (!pipe)
+    if (!pipe) {
       return false;
+    }
 
     std::string result;
     char buffer[128];
@@ -537,7 +541,8 @@ public:
     if (is_arm64) {
       // ARMv8: requires ARM Crypto Extensions
       if (file_exists("../WAes-armv8.hpp") &&
-          check_cpu_feature_support({"__ARM_FEATURE_CRYPTO"})) {
+          (check_cpu_feature_support({"__ARM_FEATURE_AES"}) ||
+           check_cpu_feature_support({"__ARM_FEATURE_CRYPTO"}))) {
         available.push_back("ARMv8");
       }
     }
@@ -570,8 +575,9 @@ public:
     if (!files_to_clean.empty()) {
       std::cout << "Cleaning up test files: ";
       for (size_t i = 0; i < files_to_clean.size(); ++i) {
-        if (i > 0)
+        if (i > 0) {
           std::cout << ", ";
+        }
         std::cout << files_to_clean[i];
         std::remove(files_to_clean[i].c_str());
       }
@@ -590,8 +596,9 @@ public:
       implementations = target_impls;
       std::cout << "Using specified implementations: ";
       for (size_t i = 0; i < implementations.size(); ++i) {
-        if (i > 0)
+        if (i > 0) {
           std::cout << ", ";
+        }
         std::cout << implementations[i];
       }
       std::cout << "\n";
@@ -606,8 +613,9 @@ public:
         implementations = available_impls;
         std::cout << "Auto-detected implementations: ";
         for (size_t i = 0; i < implementations.size(); ++i) {
-          if (i > 0)
+          if (i > 0) {
             std::cout << ", ";
+          }
           std::cout << implementations[i];
         }
         std::cout << "\n";
@@ -615,8 +623,9 @@ public:
         std::cout << "Error: Need at least 2 implementations to compare.\n";
         std::cout << "Available implementations: ";
         for (size_t i = 0; i < available_impls.size(); ++i) {
-          if (i > 0)
+          if (i > 0) {
             std::cout << ", ";
+          }
           std::cout << available_impls[i];
         }
         std::cout << (available_impls.empty() ? "None" : "") << "\n";
@@ -626,8 +635,9 @@ public:
 
     std::cout << "Comparing implementations: ";
     for (size_t i = 0; i < implementations.size(); ++i) {
-      if (i > 0)
+      if (i > 0) {
         std::cout << ", ";
+      }
       std::cout << implementations[i];
     }
     std::cout << "\n";
@@ -702,8 +712,9 @@ public:
 private:
   std::string trim(const std::string &str) {
     size_t start = str.find_first_not_of(" \t\r\n");
-    if (start == std::string::npos)
+    if (start == std::string::npos) {
       return "";
+    }
     size_t end = str.find_last_not_of(" \t\r\n");
     return str.substr(start, end - start + 1);
   }

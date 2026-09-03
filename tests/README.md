@@ -15,7 +15,8 @@ on the current machine and compares them directly in one process.
 - `test_data.hpp` - Common test data and constants
 - `test_utils.hpp` - Test utility functions and helper classes
 - `test_options.hpp` - Validated command-line options and custom parameters
-- `test_known_answers.hpp` - FIPS-197 and NIST SP 800-38A known-answer vectors
+- `test_known_answers.hpp` - FIPS-197, NIST SP 800-38A, and SP 800-38D known-answer vectors
+- `test_gcm.hpp` - GCM AAD, authentication-failure, in-place, state, and automatic-nonce tests
 - `test_template.hpp` - Shared functional tests and benchmarks
 - `test_entry.hpp` - Common standalone-header executable entry point
 - `test_waes_adapter.hpp` - Adapter used to run the shared suite through `WAes.hpp`
@@ -26,6 +27,7 @@ on the current machine and compares them directly in one process.
 - `test_generic.cpp` - Generic AES implementation test (WAes-gen.hpp)
 - `test_generic_multitu_main.cpp` - Entry point for the C++11 multi-TU link test
 - `test_generic_multitu.cpp` - Second translation unit for Generic header/link testing
+- `test_cxx11_gcm.cpp` - C++11 GCM API smoke test for every standalone header
 - `test_aes_ni.cpp` - AES-NI instruction set implementation test (WAes-ni.hpp) [x86-64 only]
 - `test_vaes.cpp` - VAES instruction set implementation test (WAes-vaes.hpp) [x86-64 only]
 - `test_vaes512.cpp` - VAES512 instruction set implementation test (WAes-vaes512.hpp) [x86-64 only]
@@ -50,13 +52,15 @@ out/
 
 Each standalone implementation tests:
 
-- 9 standard known-answer encryption/decryption vectors
-- 375 deterministic round trips: 15 mode/key/padding configurations across
+- 10 standard known-answer encryption/decryption vectors
+- 5 focused GCM behavior and failure tests
+- 450 deterministic round trips: 18 mode/key/padding configurations across
   25 boundary and multi-block lengths
 - 6 deterministic malformed-PKCS7 rejection cases
 - A nonzero process exit code when any correctness check fails
+- All test targets compile with `-fno-exceptions`
 
-That gives 390 functional checks per standalone backend. The unified test also
+That gives 471 functional checks per standalone backend. The unified test also
 runs the same shared suite, directly cross-validates its available backends, and
 runs backend availability, guard-page, padding, in-place, unaligned-I/O, and CTR
 counter regressions.
@@ -65,6 +69,7 @@ counter regressions.
 - **ECB Mode** - Electronic Codebook mode
 - **CBC Mode** - Cipher Block Chaining mode
 - **CTR Mode** - Counter mode
+- **GCM Mode** - Authenticated encryption with associated data
 
 ### Key Lengths
 - **AES-128** - 128-bit key
@@ -74,7 +79,7 @@ counter regressions.
 ### Padding Schemes
 - **PKCS7 Padding** - Standard PKCS#7 padding
 - **Zero Padding** - Zero byte padding
-- **No Padding** - CTR mode doesn't require padding
+- **No Padding** - CTR and GCM do not use padding
 
 ### Data Lengths
 
@@ -99,7 +104,7 @@ Each implementation includes comprehensive performance benchmarks:
 #### 100 MiB Large Data Benchmark
 - **Sustained Throughput**: Tests a 100 MiB buffer
 - **Optimized Iterations**: Reduced to 1 iteration for practical testing time
-- **Comprehensive Coverage**: All AES modes (ECB, CBC, CTR) and key sizes (128-bit, 256-bit)
+- **Comprehensive Coverage**: All AES modes (ECB, CBC, CTR, GCM) and key sizes (128-bit, 256-bit)
 - **Verification**: Includes correctness verification to ensure data integrity
 - **Performance Metrics**: 
   - Individual encryption and decryption timing
@@ -324,7 +329,7 @@ make clean
 ### Functional Verification
 - **Encryption/Decryption Consistency** - Verify that decryption after encryption recovers original data
 - **Padding Verification** - Verify correctness of PKCS7 padding and error detection
-- **Mode Correctness** - Verify correct implementation of ECB/CBC/CTR modes
+- **Mode Correctness** - Verify correct implementation of ECB/CBC/CTR/GCM modes
 - **Edge Cases** - Test handling of various data lengths
 
 ### Performance Testing
@@ -340,7 +345,7 @@ make clean
 - Serves as reference implementation for correctness verification
 
 ### AES-NI Implementation
-- Requires CPU with AES-NI instruction set support
+- Requires CPU with AES-NI instruction set support; PCLMULQDQ accelerates GCM
 - Significantly better performance than generic implementation
 - Single-block processing, suitable for small to medium data
 
@@ -361,6 +366,7 @@ make clean
 ### ARMv8 Implementation
 - Requires ARM64 CPU with Crypto Extensions support
 - Hardware-accelerated AES operations on ARM platforms
+- Uses PMULL for GCM authentication when the crypto extension is enabled
 - Optimized performance compared to generic implementation
 - Widely available on modern ARM64 processors (ARMv8-A with Crypto Extensions)
 

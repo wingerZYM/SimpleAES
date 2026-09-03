@@ -1,14 +1,214 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
+#include <limits>
 #include <memory.h>
+#include <random>
+#include <vector>
 
-// AES // ECB/CBC/CTR // PKCS7Padding/ZerosPadding
+// AES // ECB/CBC/CTR/GCM // PKCS7Padding/ZerosPadding
+
+constexpr size_t WAesGCMNonceSize = 12;
+constexpr size_t WAesGCMTagSize = 16;
+
+struct GCMResult {
+  std::array<uint8_t, WAesGCMNonceSize> nonce{};
+  std::array<uint8_t, WAesGCMTagSize> tag{};
+};
 
 enum class Padding {
   Zeros,
   PKCS7,
 };
+
+namespace waes_gcm_detail {
+
+inline void store64BE(uint8_t *out, uint64_t value) noexcept {
+  for (int i = 7; i >= 0; --i) {
+    out[i] = static_cast<uint8_t>(value);
+    value >>= 8;
+  }
+}
+
+inline void shiftRightOne(uint8_t value[16]) noexcept {
+  const uint8_t reductionMask = static_cast<uint8_t>(0u - (value[15] & 1u));
+  for (size_t i = 15; i != 0; --i) {
+    value[i] =
+        static_cast<uint8_t>((value[i] >> 1) | ((value[i - 1] & 1u) << 7));
+  }
+  value[0] >>= 1;
+  value[0] ^= static_cast<uint8_t>(0xe1u & reductionMask);
+}
+
+inline void shiftRightFour(uint8_t value[16]) noexcept {
+  static const std::array<std::array<uint8_t, 2>, 16> reduction = [] {
+    std::array<std::array<uint8_t, 2>, 16> result{};
+    for (size_t nibble = 0; nibble < 16; ++nibble) {
+      uint8_t block[16] = {};
+      block[15] = static_cast<uint8_t>(nibble);
+      for (size_t i = 0; i < 4; ++i) {
+        shiftRightOne(block);
+      }
+      result[nibble][0] = block[0];
+      result[nibble][1] = block[1];
+    }
+    return result;
+  }();
+
+  const uint8_t lowNibble = value[15] & 0x0f;
+  for (size_t i = 15; i != 0; --i) {
+    value[i] = static_cast<uint8_t>((value[i] >> 4) | (value[i - 1] << 4));
+  }
+  value[0] >>= 4;
+  value[0] ^= reduction[lowNibble][0];
+  value[1] ^= reduction[lowNibble][1];
+}
+
+inline void initialize4BitTable(const uint8_t h[16],
+                                uint8_t table[16][16]) noexcept {
+  for (size_t nibble = 0; nibble < 16; ++nibble) {
+    memset(table[nibble], 0, 16);
+    for (unsigned bit = 0; bit < 4; ++bit) {
+      shiftRightOne(table[nibble]);
+      const uint8_t mask = static_cast<uint8_t>(
+          0u - ((static_cast<unsigned>(nibble) >> bit) & 1u));
+      for (size_t i = 0; i < 16; ++i) {
+        table[nibble][i] ^= h[i] & mask;
+      }
+    }
+  }
+}
+
+inline void multiply4Bit(uint8_t value[16],
+                         const uint8_t table[16][16]) noexcept {
+  uint8_t product[16] = {};
+  for (size_t i = 16; i != 0; --i) {
+    const uint8_t nibbles[2] = {static_cast<uint8_t>(value[i - 1] & 0x0f),
+                                static_cast<uint8_t>(value[i - 1] >> 4)};
+    for (size_t part = 0; part < 2; ++part) {
+      shiftRightFour(product);
+      for (size_t j = 0; j < 16; ++j) {
+        product[j] ^= table[nibbles[part]][j];
+      }
+    }
+  }
+  memcpy(value, product, sizeof(product));
+}
+
+inline void update(uint8_t hash[16], const uint8_t *data, size_t length,
+                   const uint8_t table[16][16]) noexcept {
+  while (length >= 16) {
+    for (size_t i = 0; i < 16; ++i) {
+      hash[i] ^= data[i];
+    }
+    multiply4Bit(hash, table);
+    data += 16;
+    length -= 16;
+  }
+
+  if (length != 0) {
+    uint8_t block[16] = {};
+    memcpy(block, data, length);
+    for (size_t i = 0; i < 16; ++i) {
+      hash[i] ^= block[i];
+    }
+    multiply4Bit(hash, table);
+  }
+}
+
+inline bool validLengths(size_t textLength, size_t aadLength) noexcept {
+  const uint64_t maxTextLength = (uint64_t(1) << 36) - 32;
+  return static_cast<uint64_t>(textLength) <= maxTextLength &&
+         static_cast<uint64_t>(aadLength) <=
+             (std::numeric_limits<uint64_t>::max)() / 8;
+}
+
+inline void incrementCounter(uint8_t counter[16]) noexcept {
+  for (size_t i = 16; i != 12; --i) {
+    if (++counter[i - 1] != 0) {
+      break;
+    }
+  }
+}
+
+template <typename EncryptBlock>
+inline void crypt(const uint8_t *input, size_t length, uint8_t *output,
+                  const uint8_t nonce[WAesGCMNonceSize],
+                  const EncryptBlock &encryptBlock) {
+  uint8_t counter[16] = {};
+  memcpy(counter, nonce, WAesGCMNonceSize);
+  counter[15] = 1;
+
+  while (length != 0) {
+    uint8_t stream[16];
+    incrementCounter(counter);
+    encryptBlock(counter, stream);
+    const size_t chunk = length < 16 ? length : 16;
+    for (size_t i = 0; i < chunk; ++i) {
+      output[i] = input[i] ^ stream[i];
+    }
+    input += chunk;
+    output += chunk;
+    length -= chunk;
+  }
+}
+
+template <typename EncryptBlock>
+inline void
+calculateTag(const uint8_t *ciphertext, size_t textLength, const uint8_t *aad,
+             size_t aadLength, const uint8_t nonce[WAesGCMNonceSize],
+             const uint8_t table[16][16], uint8_t tag[WAesGCMTagSize],
+             const EncryptBlock &encryptBlock) {
+  uint8_t hash[16] = {};
+  update(hash, aad, aadLength, table);
+  update(hash, ciphertext, textLength, table);
+
+  uint8_t lengths[16];
+  store64BE(lengths, static_cast<uint64_t>(aadLength) * 8);
+  store64BE(lengths + 8, static_cast<uint64_t>(textLength) * 8);
+  update(hash, lengths, sizeof(lengths), table);
+
+  uint8_t j0[16] = {};
+  memcpy(j0, nonce, WAesGCMNonceSize);
+  j0[15] = 1;
+  uint8_t mask[16];
+  encryptBlock(j0, mask);
+  for (size_t i = 0; i < WAesGCMTagSize; ++i) {
+    tag[i] = hash[i] ^ mask[i];
+  }
+}
+
+inline bool tagsEqual(const uint8_t lhs[WAesGCMTagSize],
+                      const uint8_t rhs[WAesGCMTagSize]) noexcept {
+  uint8_t difference = 0;
+  for (size_t i = 0; i < WAesGCMTagSize; ++i) {
+    difference |= lhs[i] ^ rhs[i];
+  }
+  return difference == 0;
+}
+
+inline void randomNonce(uint8_t nonce[WAesGCMNonceSize]) {
+  static thread_local std::mt19937 generator = [] {
+    std::random_device source;
+    std::array<uint32_t, 8> seed{};
+    for (size_t i = 0; i < seed.size(); ++i) {
+      seed[i] = source();
+    }
+    std::seed_seq sequence(seed.begin(), seed.end());
+    return std::mt19937(sequence);
+  }();
+
+  for (size_t offset = 0; offset < WAesGCMNonceSize; offset += 4) {
+    const uint32_t word = generator();
+    nonce[offset] = static_cast<uint8_t>(word >> 24);
+    nonce[offset + 1] = static_cast<uint8_t>(word >> 16);
+    nonce[offset + 2] = static_cast<uint8_t>(word >> 8);
+    nonce[offset + 3] = static_cast<uint8_t>(word);
+  }
+}
+
+} // namespace waes_gcm_detail
 
 namespace detail {
 
@@ -610,6 +810,11 @@ public:
       keyExpansion(reinterpret_cast<const uint8_t *>(key));
     }
 
+    const uint8_t zero[16] = {};
+    uint8_t hashSubkey[16];
+    cipher(zero, hashSubkey);
+    waes_gcm_detail::initialize4BitTable(hashSubkey, m_gcmTable);
+
     if (iv) // iv padding zero
     {
       m_mode = Mode::CBC;
@@ -621,8 +826,8 @@ public:
 
   size_t SumCipherLength(size_t nInLen) const {
     constexpr size_t blockSize = Nb * 4;
-    if (m_mode == Mode::CTR) {
-      // In CTR mode, the length is not padded.
+    if (m_mode == Mode::CTR || m_mode == Mode::GCM) {
+      // CTR and GCM do not pad the payload.
       return nInLen;
     } else if (m_padding == Padding::Zeros) {
       return ((nInLen + blockSize - 1) / blockSize) * blockSize;
@@ -647,6 +852,118 @@ public:
     memcpy(m_iv, counter, length > 16 ? 16 : length);
   }
 
+  // Copies the additional authenticated data and switches to GCM mode.
+  // Empty AAD is represented by SetAAD(nullptr, 0).
+  bool SetAAD(const void *aad = nullptr, size_t aadLength = 0) {
+    if ((aadLength != 0 && aad == nullptr) ||
+        !waes_gcm_detail::validLengths(0, aadLength)) {
+      return false;
+    }
+
+    std::vector<uint8_t> next;
+    if (aadLength != 0) {
+      const auto *bytes = reinterpret_cast<const uint8_t *>(aad);
+      next.assign(bytes, bytes + aadLength);
+    }
+    m_aad.swap(next);
+    m_mode = Mode::GCM;
+    return true;
+  }
+
+  bool CipherGCM(const void *in, size_t inLength, void *out, size_t &outLength,
+                 const void *nonce, size_t nonceLength, void *tag,
+                 size_t &tagLength) const {
+    const size_t outputCapacity = outLength;
+    const size_t tagCapacity = tagLength;
+    outLength = 0;
+    tagLength = 0;
+
+    if (m_mode != Mode::GCM || nonceLength != WAesGCMNonceSize ||
+        nonce == nullptr || tag == nullptr || outputCapacity < inLength ||
+        tagCapacity < WAesGCMTagSize ||
+        (inLength != 0 && (in == nullptr || out == nullptr)) ||
+        !waes_gcm_detail::validLengths(inLength, m_aad.size())) {
+      return false;
+    }
+
+    const auto encryptBlock = [this](const uint8_t *block, uint8_t *result) {
+      cipher(block, result);
+    };
+    const auto *nonceBytes = reinterpret_cast<const uint8_t *>(nonce);
+    auto *output = reinterpret_cast<uint8_t *>(out);
+    if (inLength != 0) {
+      waes_gcm_detail::crypt(reinterpret_cast<const uint8_t *>(in), inLength,
+                             output, nonceBytes, encryptBlock);
+    }
+
+    uint8_t calculatedTag[WAesGCMTagSize];
+    waes_gcm_detail::calculateTag(output, inLength, m_aad.data(), m_aad.size(),
+                                  nonceBytes, m_gcmTable, calculatedTag,
+                                  encryptBlock);
+    memcpy(tag, calculatedTag, sizeof(calculatedTag));
+    outLength = inLength;
+    tagLength = WAesGCMTagSize;
+    return true;
+  }
+
+  bool CipherGCM(const void *in, size_t inLength, void *out, size_t &outLength,
+                 GCMResult &result) const {
+    GCMResult next;
+    waes_gcm_detail::randomNonce(next.nonce.data());
+
+    size_t tagLength = next.tag.size();
+    if (!CipherGCM(in, inLength, out, outLength, next.nonce.data(),
+                   next.nonce.size(), next.tag.data(), tagLength)) {
+      return false;
+    }
+
+    result = next;
+    return true;
+  }
+
+  bool InvCipherGCM(const void *in, size_t inLength, void *out,
+                    size_t &outLength, const void *nonce, size_t nonceLength,
+                    const void *tag, size_t tagLength) const {
+    const size_t outputCapacity = outLength;
+    outLength = 0;
+
+    if (m_mode != Mode::GCM || nonceLength != WAesGCMNonceSize ||
+        tagLength != WAesGCMTagSize || nonce == nullptr || tag == nullptr ||
+        outputCapacity < inLength ||
+        (inLength != 0 && (in == nullptr || out == nullptr)) ||
+        !waes_gcm_detail::validLengths(inLength, m_aad.size())) {
+      return false;
+    }
+
+    const auto encryptBlock = [this](const uint8_t *block, uint8_t *result) {
+      cipher(block, result);
+    };
+    const auto *input = reinterpret_cast<const uint8_t *>(in);
+    const auto *nonceBytes = reinterpret_cast<const uint8_t *>(nonce);
+    uint8_t calculatedTag[WAesGCMTagSize];
+    waes_gcm_detail::calculateTag(input, inLength, m_aad.data(), m_aad.size(),
+                                  nonceBytes, m_gcmTable, calculatedTag,
+                                  encryptBlock);
+    if (!waes_gcm_detail::tagsEqual(calculatedTag,
+                                    reinterpret_cast<const uint8_t *>(tag))) {
+      return false;
+    }
+
+    if (inLength != 0) {
+      waes_gcm_detail::crypt(input, inLength, reinterpret_cast<uint8_t *>(out),
+                             nonceBytes, encryptBlock);
+    }
+    outLength = inLength;
+    return true;
+  }
+
+  bool InvCipherGCM(const void *in, size_t inLength, void *out,
+                    size_t &outLength, const GCMResult &result) const {
+    return InvCipherGCM(in, inLength, out, outLength, result.nonce.data(),
+                        result.nonce.size(), result.tag.data(),
+                        result.tag.size());
+  }
+
   bool Cipher(const void *in, size_t inLength, void *out,
               size_t &outLength) const {
     switch (m_mode) {
@@ -656,6 +973,9 @@ public:
       return cipherCBC(in, inLength, out, outLength);
     case Mode::CTR:
       return cipherCTR(in, inLength, out, outLength);
+    case Mode::GCM:
+      outLength = 0;
+      return false;
     }
 
     return false;
@@ -670,6 +990,9 @@ public:
       return invCipherCBC(in, inLength, out, outLength);
     case Mode::CTR:
       return cipherCTR(in, inLength, out, outLength);
+    case Mode::GCM:
+      outLength = 0;
+      return false;
     }
 
     return false;
@@ -686,11 +1009,14 @@ private:
     ECB,
     CBC,
     CTR,
+    GCM,
   };
 
   alignas(16) uint32_t m_w[Nb * (Nr + 1)];
   alignas(16) uint32_t m_dw[Nb * (Nr + 1)]; // precomputed decryption round keys
   alignas(16) uint8_t m_iv[16] = {};
+  alignas(16) uint8_t m_gcmTable[16][16];
+  std::vector<uint8_t> m_aad;
   Padding m_padding;
   Mode m_mode;
 
@@ -904,25 +1230,31 @@ private:
     // Build decryption round key schedule (equivalent inverse cipher, FIPS 197
     // §5.3.5) Decrypt round 0 = encrypt round Nr (first AddRoundKey, no
     // transform)
-    for (int i = 0; i < Nb; ++i)
+    for (int i = 0; i < Nb; ++i) {
       m_dw[i] = m_w[Nb * Nr + i];
+    }
     // Middle rounds: apply InvMixColumns to the reversed encrypt round keys
-    for (int r = 1; r < Nr; ++r)
-      for (int i = 0; i < Nb; ++i)
+    for (int r = 1; r < Nr; ++r) {
+      for (int i = 0; i < Nb; ++i) {
         m_dw[Nb * r + i] = invMixCol(m_w[Nb * (Nr - r) + i]);
+      }
+    }
     // Decrypt round Nr = encrypt round 0 (final AddRoundKey, no transform)
-    for (int i = 0; i < Nb; ++i)
+    for (int i = 0; i < Nb; ++i) {
       m_dw[Nb * Nr + i] = m_w[i];
+    }
   }
 
   bool isValidPKCS7Padding(uint8_t *state) const {
     const auto pad = state[15];
-    if (pad > 16 || pad == 0)
+    if (pad > 16 || pad == 0) {
       return false;
+    }
 
     for (int8_t i = 16 - pad; i < 15; ++i) {
-      if (pad != state[i])
+      if (pad != state[i]) {
         return false;
+      }
     }
 
     return true;

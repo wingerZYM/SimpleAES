@@ -15,18 +15,19 @@ template <int KeySize>
 TestUtils::TestResult runCase(const uint8_t *key, size_t keyLength, Mode mode,
                               const uint8_t *input,
                               const uint8_t *expectedCiphertext) {
-  static constexpr uint8_t cbcIV[16] = {
-      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-      0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f};
-  static constexpr uint8_t ctrBlock[16] = {
-      0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
-      0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff};
+  static constexpr uint8_t cbcIV[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                                        0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
+                                        0x0c, 0x0d, 0x0e, 0x0f};
+  static constexpr uint8_t ctrBlock[16] = {0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5,
+                                           0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb,
+                                           0xfc, 0xfd, 0xfe, 0xff};
 
   auto setMode = [&](auto &aes) {
-    if (mode == Mode::CBC)
+    if (mode == Mode::CBC) {
       aes.SetIV(cbcIV, sizeof(cbcIV));
-    else if (mode == Mode::CTR)
+    } else if (mode == Mode::CTR) {
       aes.SetCounter(ctrBlock, sizeof(ctrBlock));
+    }
   };
 
   CWAes<KeySize> encryptor(key, keyLength, nullptr, 0, Padding::Zeros);
@@ -55,23 +56,65 @@ TestUtils::TestResult runCase(const uint8_t *key, size_t keyLength, Mode mode,
   return {true, "NIST/FIPS known-answer vector"};
 }
 
+inline TestUtils::TestResult runGCMCase() {
+  // NIST SP 800-38D, Test Case 2: all-zero AES-128 key and 96-bit IV.
+  static constexpr uint8_t key[16] = {};
+  static constexpr uint8_t nonce[12] = {};
+  static constexpr uint8_t plaintext[16] = {};
+  static constexpr uint8_t expectedCiphertext[16] = {
+      0x03, 0x88, 0xda, 0xce, 0x60, 0xb6, 0xa3, 0x92,
+      0xf3, 0x28, 0xc2, 0xb9, 0x71, 0xb2, 0xfe, 0x78};
+  static constexpr uint8_t expectedTag[16] = {
+      0xab, 0x6e, 0x47, 0xd4, 0x2c, 0xec, 0x13, 0xbd,
+      0xf5, 0x3a, 0x67, 0xb2, 0x12, 0x57, 0xbd, 0xdf};
+
+  CWAes128 aes(key, sizeof(key), nullptr, 0, Padding::PKCS7);
+  if (!aes.SetAAD(nullptr, 0) || aes.SumCipherLength(sizeof(plaintext)) != 16) {
+    return {false, "could not enter GCM mode"};
+  }
+
+  std::array<uint8_t, 16> ciphertext{};
+  std::array<uint8_t, 16> tag{};
+  size_t ciphertextLength = ciphertext.size();
+  size_t tagLength = tag.size();
+  if (!aes.CipherGCM(plaintext, sizeof(plaintext), ciphertext.data(),
+                     ciphertextLength, nonce, sizeof(nonce), tag.data(),
+                     tagLength) ||
+      ciphertextLength != ciphertext.size() || tagLength != tag.size() ||
+      std::memcmp(ciphertext.data(), expectedCiphertext, ciphertext.size()) !=
+          0 ||
+      std::memcmp(tag.data(), expectedTag, tag.size()) != 0) {
+    return {false, "GCM ciphertext or tag mismatch"};
+  }
+
+  std::array<uint8_t, 16> recovered{};
+  size_t recoveredLength = recovered.size();
+  if (!aes.InvCipherGCM(ciphertext.data(), ciphertext.size(), recovered.data(),
+                        recoveredLength, nonce, sizeof(nonce), tag.data(),
+                        tag.size()) ||
+      recoveredLength != recovered.size() ||
+      std::memcmp(recovered.data(), plaintext, recovered.size()) != 0) {
+    return {false, "GCM authenticated decryption mismatch"};
+  }
+
+  return {true, "NIST SP 800-38D known-answer vector"};
+}
+
 inline TestUtils::TestSummary run(const std::string &implementationName) {
   // FIPS-197 Appendix C ECB vectors.
   static constexpr uint8_t ecbPlaintext[16] = {
       0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
       0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff};
-  static constexpr uint8_t ecbKey128[16] = {
-      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-      0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f};
+  static constexpr uint8_t ecbKey128[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
+                                            0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
+                                            0x0c, 0x0d, 0x0e, 0x0f};
   static constexpr uint8_t ecbKey192[24] = {
-      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-      0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-      0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17};
+      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
+      0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17};
   static constexpr uint8_t ecbKey256[32] = {
-      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-      0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-      0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-      0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
+      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+      0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+      0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
   static constexpr uint8_t ecbCipher128[16] = {
       0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30,
       0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a};
@@ -108,9 +151,8 @@ inline TestUtils::TestSummary run(const std::string &implementationName) {
   TestUtils::TestSummary summary;
   auto check = [&](const TestUtils::TestResult &result, const char *mode,
                    int keySize) {
-    TestUtils::printTestResult(
-        result, implementationName + "-KAT-" + mode + "-AES" +
-                    std::to_string(keySize));
+    TestUtils::printTestResult(result, implementationName + "-KAT-" + mode +
+                                           "-AES" + std::to_string(keySize));
     summary.addResult(result.success);
   };
 
@@ -141,6 +183,9 @@ inline TestUtils::TestSummary run(const std::string &implementationName) {
   check(runCase<256>(TestData::AES256_KEY, TestData::AES256_KEY_SIZE, Mode::CTR,
                      blockPlaintext, ctrCipher256),
         "CTR", 256);
+  const auto gcmResult = runGCMCase();
+  TestUtils::printTestResult(gcmResult, implementationName + "-KAT-GCM-AES128");
+  summary.addResult(gcmResult.success);
   return summary;
 }
 

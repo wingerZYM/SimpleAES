@@ -1,6 +1,7 @@
 #pragma once
 
 #include "test_data.hpp"
+#include "test_gcm.hpp"
 #include "test_known_answers.hpp"
 #include "test_options.hpp"
 #include "test_utils.hpp"
@@ -40,13 +41,15 @@ void writeTestResultToFile(const std::string &implName,
                            const std::string &padding) {
   std::string dir;
   const std::string envDir = getEnvironmentVariable("TEST_OUTPUT_DIR");
-  if (!envDir.empty())
+  if (!envDir.empty()) {
     dir = envDir + "/";
+  }
   std::string filename = dir + "test_results_" + implName + ".txt";
   std::ofstream file(filename, std::ios::app);
 
-  if (!file.is_open())
+  if (!file.is_open()) {
     return;
+  }
 
   file << "=== Test: " << testName << " ===" << std::endl;
   file << "Implementation: " << implName << std::endl;
@@ -139,27 +142,42 @@ TestResult testAESImplementation(size_t dataSize, const std::string &mode,
 
   // Create AES instance
   CWAes<KeySize> aes(currentKey, currentKeyLen, nullptr, 0, padding);
+  static constexpr uint8_t gcmAAD[] = {0x53, 0x69, 0x6d, 0x70, 0x6c,
+                                       0x65, 0x41, 0x45, 0x53};
+  static constexpr uint8_t gcmNonce[WAesGCMNonceSize] = {
+      0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe, 0x01, 0x23, 0x45, 0x67};
 
   // Set mode
   if (mode == "CBC") {
     aes.SetIV(currentIV, IV_SIZE);
   } else if (mode == "CTR") {
     aes.SetCounter(currentCounter, COUNTER_SIZE);
+  } else if (mode == "GCM" && !aes.SetAAD(gcmAAD, sizeof(gcmAAD))) {
+    return TestResult(false, "SetAAD failed");
   }
   // ECB is default mode
 
   // Prepare buffers
-  size_t maxCipherLen =
-      (mode == "CTR") ? dataSize : aes.SumCipherLength(dataSize);
+  size_t maxCipherLen = (mode == "CTR" || mode == "GCM")
+                            ? dataSize
+                            : aes.SumCipherLength(dataSize);
   std::vector<uint8_t> ciphertext(maxCipherLen);
   std::vector<uint8_t> decrypted(dataSize);
+  std::array<uint8_t, WAesGCMTagSize> gcmTag{};
 
   Timer timer;
 
   // Encrypt
   timer.start();
   size_t cipherLen = ciphertext.size();
-  if (!aes.Cipher(testData.data(), dataSize, ciphertext.data(), cipherLen)) {
+  size_t gcmTagLength = gcmTag.size();
+  const bool encrypted =
+      mode == "GCM"
+          ? aes.CipherGCM(testData.data(), dataSize, ciphertext.data(),
+                          cipherLen, gcmNonce, sizeof(gcmNonce), gcmTag.data(),
+                          gcmTagLength)
+          : aes.Cipher(testData.data(), dataSize, ciphertext.data(), cipherLen);
+  if (!encrypted) {
     return TestResult(false, "Encryption failed");
   }
   double encryptTime = timer.elapsed();
@@ -169,8 +187,14 @@ TestResult testAESImplementation(size_t dataSize, const std::string &mode,
   // Decrypt
   timer.start();
   size_t decryptedLen = decrypted.size();
-  if (!aes.InvCipher(ciphertext.data(), cipherLen, decrypted.data(),
-                     decryptedLen)) {
+  const bool decryptedOK =
+      mode == "GCM"
+          ? aes.InvCipherGCM(ciphertext.data(), cipherLen, decrypted.data(),
+                             decryptedLen, gcmNonce, sizeof(gcmNonce),
+                             gcmTag.data(), gcmTag.size())
+          : aes.InvCipher(ciphertext.data(), cipherLen, decrypted.data(),
+                          decryptedLen);
+  if (!decryptedOK) {
     return TestResult(false, "Decryption failed");
   }
   double decryptTime = timer.elapsed();
@@ -257,31 +281,55 @@ TestResult benchmarkImplementation(const uint8_t *key, size_t keyLen,
   auto testData = generateLargeTestData(dataSize);
 
   CWAes<KeySize> aes(key, keyLen, nullptr, 0, padding);
+  static constexpr uint8_t gcmAAD[] = {0x62, 0x65, 0x6e, 0x63, 0x68};
+  // Benchmark-only nonce: repeated outputs are discarded and never used as
+  // independent messages. Production GCM must not reuse a nonce with a key.
+  static constexpr uint8_t gcmNonce[WAesGCMNonceSize] = {
+      0x21, 0x43, 0x65, 0x87, 0xa9, 0xcb, 0xed, 0x0f, 0x12, 0x34, 0x56, 0x78};
 
   // Set mode
   if (mode == "CBC") {
     aes.SetIV(getCurrentIV(options), IV_SIZE);
   } else if (mode == "CTR") {
     aes.SetCounter(getCurrentCounter(options), COUNTER_SIZE);
+  } else if (mode == "GCM" && !aes.SetAAD(gcmAAD, sizeof(gcmAAD))) {
+    return TestResult(false, "SetAAD failed");
   }
 
   // Prepare buffers
-  size_t maxCipherLen =
-      (mode == "CTR") ? dataSize : aes.SumCipherLength(dataSize);
+  size_t maxCipherLen = (mode == "CTR" || mode == "GCM")
+                            ? dataSize
+                            : aes.SumCipherLength(dataSize);
   std::vector<uint8_t> ciphertext(maxCipherLen);
   std::vector<uint8_t> decrypted(dataSize);
+  std::array<uint8_t, WAesGCMTagSize> gcmTag{};
 
   Timer timer;
 
   // Warm up
   for (int i = 0; i < 10; i++) {
     size_t tmpLen = ciphertext.size();
-    if (!aes.Cipher(testData.data(), dataSize, ciphertext.data(), tmpLen))
+    size_t tagLength = gcmTag.size();
+    const bool encrypted =
+        mode == "GCM"
+            ? aes.CipherGCM(testData.data(), dataSize, ciphertext.data(),
+                            tmpLen, gcmNonce, sizeof(gcmNonce), gcmTag.data(),
+                            tagLength)
+            : aes.Cipher(testData.data(), dataSize, ciphertext.data(), tmpLen);
+    if (!encrypted) {
       return TestResult(false, "Encryption warm-up failed");
+    }
     tmpLen = decrypted.size();
-    if (!aes.InvCipher(ciphertext.data(), maxCipherLen, decrypted.data(),
-                       tmpLen))
+    const bool decryptedOK =
+        mode == "GCM"
+            ? aes.InvCipherGCM(ciphertext.data(), maxCipherLen,
+                               decrypted.data(), tmpLen, gcmNonce,
+                               sizeof(gcmNonce), gcmTag.data(), gcmTag.size())
+            : aes.InvCipher(ciphertext.data(), maxCipherLen, decrypted.data(),
+                            tmpLen);
+    if (!decryptedOK) {
       return TestResult(false, "Decryption warm-up failed");
+    }
   }
 
   // Benchmark encryption
@@ -289,8 +337,16 @@ TestResult benchmarkImplementation(const uint8_t *key, size_t keyLen,
   size_t finalCipherLen = 0;
   for (int i = 0; i < iterations; i++) {
     size_t tmpLen = ciphertext.size();
-    if (!aes.Cipher(testData.data(), dataSize, ciphertext.data(), tmpLen))
+    size_t tagLength = gcmTag.size();
+    const bool encrypted =
+        mode == "GCM"
+            ? aes.CipherGCM(testData.data(), dataSize, ciphertext.data(),
+                            tmpLen, gcmNonce, sizeof(gcmNonce), gcmTag.data(),
+                            tagLength)
+            : aes.Cipher(testData.data(), dataSize, ciphertext.data(), tmpLen);
+    if (!encrypted) {
       return TestResult(false, "Encryption benchmark failed");
+    }
     finalCipherLen = tmpLen;
   }
   double encryptTime = timer.elapsed() / iterations;
@@ -300,9 +356,16 @@ TestResult benchmarkImplementation(const uint8_t *key, size_t keyLen,
   size_t finalPlaintextLen = 0;
   for (int i = 0; i < iterations; i++) {
     size_t tmpLen = decrypted.size();
-    if (!aes.InvCipher(ciphertext.data(), finalCipherLen, decrypted.data(),
-                       tmpLen))
+    const bool decryptedOK =
+        mode == "GCM"
+            ? aes.InvCipherGCM(ciphertext.data(), finalCipherLen,
+                               decrypted.data(), tmpLen, gcmNonce,
+                               sizeof(gcmNonce), gcmTag.data(), gcmTag.size())
+            : aes.InvCipher(ciphertext.data(), finalCipherLen, decrypted.data(),
+                            tmpLen);
+    if (!decryptedOK) {
       return TestResult(false, "Decryption benchmark failed");
+    }
     finalPlaintextLen = tmpLen;
   }
   double decryptTime = timer.elapsed() / iterations;
@@ -330,6 +393,7 @@ TestSummary runImplementationTests(const std::string &implementationName,
             << " AES Implementation Tests ===" << std::endl;
 
   summary.merge(KnownAnswerTests::run(implementationName));
+  summary.merge(GCMTests::run(implementationName));
 
   // Test configurations
   struct KeyConfig {
@@ -339,23 +403,24 @@ TestSummary runImplementationTests(const std::string &implementationName,
 
   KeyConfig keys[] = {{128, "AES128"}, {192, "AES192"}, {256, "AES256"}};
 
-  std::string modes[] = {"ECB", "CBC", "CTR"};
+  std::string modes[] = {"ECB", "CBC", "CTR", "GCM"};
   Padding paddings[] = {Padding::PKCS7, Padding::Zeros};
   std::string paddingNames[] = {"PKCS7", "Zeros"};
 
   for (const auto &keyConfig : keys) {
     for (const auto &mode : modes) {
       for (int p = 0; p < 2; p++) {
-        // Skip padding for CTR mode
-        if (mode == "CTR" && p > 0)
+        // CTR and GCM do not use padding.
+        if ((mode == "CTR" || mode == "GCM") && p > 0) {
           continue;
+        }
 
         for (size_t dataSize : TEST_SIZES) {
           TestResult result;
-          std::string testName = implementationName + "-" + mode + "-" +
-                                 keyConfig.name + "-" +
-                                 (mode == "CTR" ? "NoPad" : paddingNames[p]) +
-                                 " (" + std::to_string(dataSize) + " bytes)";
+          std::string testName =
+              implementationName + "-" + mode + "-" + keyConfig.name + "-" +
+              ((mode == "CTR" || mode == "GCM") ? "NoPad" : paddingNames[p]) +
+              " (" + std::to_string(dataSize) + " bytes)";
 
           switch (keyConfig.keySize) {
           case 128:
@@ -376,8 +441,9 @@ TestSummary runImplementationTests(const std::string &implementationName,
           summary.addResult(result.success);
         }
 
-        if (mode == "CTR" || paddings[p] != Padding::PKCS7)
+        if (mode == "CTR" || mode == "GCM" || paddings[p] != Padding::PKCS7) {
           continue;
+        }
 
         // Test deterministic rejection of malformed PKCS7 padding.
         TestResult paddingResult;
@@ -431,30 +497,56 @@ TestResult benchmarkLargeData(const uint8_t *key, size_t keyLen,
   auto testData = generateLargeTestData(dataSize);
 
   CWAes<KeySize> aes(key, keyLen, nullptr, 0, padding);
+  static constexpr uint8_t gcmAAD[] = {0x6c, 0x61, 0x72, 0x67, 0x65};
+  // Benchmark-only nonce: repeated outputs are discarded and never used as
+  // independent messages. Production GCM must not reuse a nonce with a key.
+  static constexpr uint8_t gcmNonce[WAesGCMNonceSize] = {
+      0x31, 0x53, 0x75, 0x97, 0xb9, 0xdb, 0xfd, 0x1f, 0x23, 0x45, 0x67, 0x89};
 
   // Set mode
   if (mode == "CBC") {
     aes.SetIV(getCurrentIV(options), IV_SIZE);
   } else if (mode == "CTR") {
     aes.SetCounter(getCurrentCounter(options), COUNTER_SIZE);
+  } else if (mode == "GCM" && !aes.SetAAD(gcmAAD, sizeof(gcmAAD))) {
+    return TestResult(false, "SetAAD failed");
   }
 
   // Prepare buffers
-  size_t maxCipherLen =
-      (mode == "CTR") ? dataSize : aes.SumCipherLength(dataSize);
+  size_t maxCipherLen = (mode == "CTR" || mode == "GCM")
+                            ? dataSize
+                            : aes.SumCipherLength(dataSize);
   std::vector<uint8_t> ciphertext(maxCipherLen);
   std::vector<uint8_t> decrypted(dataSize);
+  std::array<uint8_t, WAesGCMTagSize> gcmTag{};
 
   Timer timer;
 
   // Warm up with smaller iterations for large data
   for (int i = 0; i < 3; i++) {
     size_t cipherLen = ciphertext.size();
-    if (!aes.Cipher(testData.data(), dataSize, ciphertext.data(), cipherLen))
+    size_t tagLength = gcmTag.size();
+    const bool encrypted =
+        mode == "GCM"
+            ? aes.CipherGCM(testData.data(), dataSize, ciphertext.data(),
+                            cipherLen, gcmNonce, sizeof(gcmNonce),
+                            gcmTag.data(), tagLength)
+            : aes.Cipher(testData.data(), dataSize, ciphertext.data(),
+                         cipherLen);
+    if (!encrypted) {
       return TestResult(false, "Encryption warm-up failed");
+    }
     size_t decLen = decrypted.size();
-    if (!aes.InvCipher(ciphertext.data(), cipherLen, decrypted.data(), decLen))
+    const bool decryptedOK =
+        mode == "GCM"
+            ? aes.InvCipherGCM(ciphertext.data(), cipherLen, decrypted.data(),
+                               decLen, gcmNonce, sizeof(gcmNonce),
+                               gcmTag.data(), gcmTag.size())
+            : aes.InvCipher(ciphertext.data(), cipherLen, decrypted.data(),
+                            decLen);
+    if (!decryptedOK) {
       return TestResult(false, "Decryption warm-up failed");
+    }
   }
 
   // Benchmark encryption
@@ -462,9 +554,17 @@ TestResult benchmarkLargeData(const uint8_t *key, size_t keyLen,
   size_t finalCipherLen = ciphertext.size();
   for (int i = 0; i < iterations; i++) {
     finalCipherLen = ciphertext.size();
-    if (!aes.Cipher(testData.data(), dataSize, ciphertext.data(),
-                    finalCipherLen))
+    size_t tagLength = gcmTag.size();
+    const bool encrypted =
+        mode == "GCM"
+            ? aes.CipherGCM(testData.data(), dataSize, ciphertext.data(),
+                            finalCipherLen, gcmNonce, sizeof(gcmNonce),
+                            gcmTag.data(), tagLength)
+            : aes.Cipher(testData.data(), dataSize, ciphertext.data(),
+                         finalCipherLen);
+    if (!encrypted) {
       return TestResult(false, "Encryption benchmark failed");
+    }
   }
   double encryptTime = timer.elapsed() / iterations;
 
@@ -473,9 +573,16 @@ TestResult benchmarkLargeData(const uint8_t *key, size_t keyLen,
   size_t finalPlaintextLen = 0;
   for (int i = 0; i < iterations; i++) {
     size_t tmpLen = decrypted.size();
-    if (!aes.InvCipher(ciphertext.data(), finalCipherLen, decrypted.data(),
-                       tmpLen))
+    const bool decryptedOK =
+        mode == "GCM"
+            ? aes.InvCipherGCM(ciphertext.data(), finalCipherLen,
+                               decrypted.data(), tmpLen, gcmNonce,
+                               sizeof(gcmNonce), gcmTag.data(), gcmTag.size())
+            : aes.InvCipher(ciphertext.data(), finalCipherLen, decrypted.data(),
+                            tmpLen);
+    if (!decryptedOK) {
       return TestResult(false, "Decryption benchmark failed");
+    }
     finalPlaintextLen = tmpLen;
   }
   double decryptTime = timer.elapsed() / iterations;
@@ -514,7 +621,7 @@ bool runPerformanceTests(const std::string &implementationName,
       {128, "AES128"}, {256, "AES256"} // Focus on 128 and 256 for performance
   };
 
-  std::string modes[] = {"ECB", "CBC", "CTR"};
+  std::string modes[] = {"ECB", "CBC", "CTR", "GCM"};
   std::vector<size_t> perfSizes = {1024, 4096, 16384,
                                    65536}; // Regular performance sizes
   bool allSuccessful = true;

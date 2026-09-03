@@ -16,8 +16,9 @@ bool compareData(const uint8_t *data1, const uint8_t *data2, size_t len) {
 // Compare two vectors
 bool compareData(const std::vector<uint8_t> &data1,
                  const std::vector<uint8_t> &data2) {
-  if (data1.size() != data2.size())
+  if (data1.size() != data2.size()) {
     return false;
+  }
   return compareData(data1.data(), data2.data(), data1.size());
 }
 

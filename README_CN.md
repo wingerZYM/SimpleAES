@@ -16,13 +16,13 @@
 
 每个 `WAes-*.hpp` 都是一个完整独立的 AES 实现，针对特定指令集。包含一个头文件，获得一个后端——没有抽象层，没有运行时分发开销。
 
-| 头文件 | 后端 | 编译参数 |
-|--------|------|----------|
-| `WAes-gen.hpp` | 纯 C++（通用） | 无（C++11） |
-| `WAes-ni.hpp` | Intel AES-NI | `-mssse3 -maes` |
-| `WAes-vaes.hpp` | Intel VAES (AVX2) | `-mavx2 -maes -mvaes` |
-| `WAes-vaes512.hpp` | Intel VAES (AVX512) | `-mavx512f -mavx512bw -mavx512dq -mavx512vl -maes -mvaes` |
-| `WAes-armv8.hpp` | ARMv8-A Crypto | `-march=armv8-a+crypto` |
+| 头文件 | 后端 |
+|--------|------|
+| `WAes-gen.hpp` | 纯 C++（通用） |
+| `WAes-ni.hpp` | Intel AES-NI |
+| `WAes-vaes.hpp` | Intel VAES (AVX2) |
+| `WAes-vaes512.hpp` | Intel VAES (AVX512) |
+| `WAes-armv8.hpp` | ARMv8-A Crypto |
 
 **适合场景**：运行平台明确的服务端程序或嵌入式系统。编译时直接指定最优后端，零间接调用，性能最大化。
 
@@ -50,7 +50,7 @@ auto aes = WAes::Create<256>(WAes::Backend::Generic, key, keyLen);
 
 ### 性能预期
 
-对于长度足够大、可以并行处理的 ECB、CTR 和 CBC 解密路径，通常有以下趋势：
+对于长度足够大、可以并行处理的 ECB、CTR、GCM 和 CBC 解密路径，通常有以下趋势：
 
 ```text
 Generic < AES-NI < VAES (AVX2) < VAES512 (AVX512)
@@ -65,7 +65,7 @@ CPU 频率策略以及宽向量状态的开销都可能改变结果。应使用�
 ## 这么简单，能做什么？
 设计这个库的时候，本着简单、易用、**够用**、高效、无依赖的原则。因此并没有大而全的覆盖所有加密模式。而是实现了最最常用的模式，以求用最精简的方式满足绝大多数的使用场景。具体如下：
 * 128、192、256 三种密钥强度
-* ECB、CBC、CTR 三种加密模式
+* ECB、CBC、CTR，以及带认证的 GCM 四种加密模式
 * Zero、PKCS7 两种补位方式
 
 以上的组合，目前已足够覆盖本人所有的生产与测试环境。
@@ -107,6 +107,53 @@ cbc.SetIV(iv2, 16); // 可以修改IV，并从任意模式切为CBC模式。
 CWAes128 ctr(key, 16);
 ctr.SetCounter(iv, 16);// 设置counter并转为ctr模式。
 ```
+
+使用调用方管理 nonce 的 AES-128-GCM：
+
+```c++
+const uint8_t nonce[WAesGCMNonceSize] = {/* 必须正好 12 字节 */};
+const uint8_t aad[] = {/* 参与认证，但不加密 */};
+uint8_t tag[WAesGCMTagSize];
+
+CWAes128 gcm(key, 16);
+gcm.SetAAD(aad, sizeof(aad)); // 复制 AAD，并切换为 GCM 模式。
+
+size_t cipherLen = dataLen;
+size_t tagLen = sizeof(tag);
+if (!gcm.CipherGCM(data, dataLen, ciphertext, cipherLen,
+                   nonce, sizeof(nonce), tag, tagLen)) {
+    // 参数无效，或输出/tag 缓冲区不足
+}
+
+size_t plainLen = dataLen;
+if (!gcm.InvCipherGCM(ciphertext, cipherLen, plaintext, plainLen,
+                      nonce, sizeof(nonce), tag, tagLen)) {
+    // 认证失败；plaintext 保持不变
+}
+```
+
+加密时也可以使用接收 `GCMResult` 的便利重载，自动生成 nonce，并与 tag
+一起返回：
+
+```c++
+GCMResult result;
+size_t cipherLen = dataLen;
+gcm.CipherGCM(data, dataLen, ciphertext, cipherLen, result);
+```
+
+GCM 有意采用严格、极简的一次性接口：nonce 固定为 12 字节，分离的 tag
+固定为 16 字节，并忽略 padding。`SetAAD(nullptr, 0)` 表示空 AAD，同时切换到
+GCM。调用 `SetIV` 或 `SetCounter` 会分别切回 CBC 或 CTR；处于 GCM 模式时，
+原有 `Cipher`/`InvCipher` 会失败，因为它们的签名无法传递 nonce 和 tag。
+输入和输出完全相同时支持原地操作，其他部分重叠的缓冲区布局不受支持。
+单条消息的 payload 上限为 2^36 - 32 字节，AAD 长度不能超过
+floor((2^64 - 1) / 8) 字节。
+
+AAD 可以重复使用，并由 `SetAAD` 复制保存；同一密钥下 nonce 绝不能重复。
+自动重载使用由 `std::random_device` 播种的线程局部 `std::mt19937`。这是极简的
+便利随机源，不承诺密码学随机性或绝对唯一性；需要由应用协议严格分配 nonce
+时，应使用显式 nonce 重载，并将每个密钥下自动 nonce 的调用次数严格控制在
+2^32 次以内。
 加密：
 ```c++
 CWAes128 aes(key, 16);
@@ -141,6 +188,9 @@ CTR 将传入的 16 字节值视为计数块：前 8 字节保持不变，后 8 
 ## 使用统一头文件（`WAes.hpp`）
 
 `WAes.hpp` 通过多态接口提供相同的操作，并附加了额外的便捷功能：
+
+GCM 接口保持一致，其中 `GCMResult`、`GCMNonceSize` 和 `GCMTagSize`
+位于 `WAes` 命名空间内。
 
 ```c++
 #include "WAes.hpp"
@@ -196,12 +246,15 @@ RAII 作用域 IV（离开作用域后自动恢复原始 IV/模式）：
 | 头文件 | 必需编译参数 |
 |--------|-------------|
 | `WAes-gen.hpp` | 无（C++11） |
-| `WAes-ni.hpp` | `-mssse3 -maes` |
-| `WAes-vaes.hpp` | `-mavx2 -maes -mvaes` |
-| `WAes-vaes512.hpp` | `-mavx512f -mavx512bw -mavx512dq -mavx512vl -maes -mvaes` |
+| `WAes-ni.hpp` | `-mssse3 -maes`；GCM 硬件加速另加 `-mpclmul` |
+| `WAes-vaes.hpp` | `-mavx2 -maes -mvaes`；GCM 硬件加速另加 `-mpclmul` |
+| `WAes-vaes512.hpp` | `-mavx512f -mavx512bw -mavx512dq -mavx512vl -maes -mvaes`；GCM 硬件加速另加 `-mpclmul` |
 | `WAes-armv8.hpp` | `-march=armv8-a+crypto`（Linux/macOS ARM64） |
 
 所有独立变体最低要求 `-std=c++11`，推荐使用 `-std=c++17 -O3`。
+所有头文件均不包含异常处理语法，可以使用 `-fno-exceptions` 编译。在这种构建中，
+AAD/容器存储的内存分配失败，以及标准库 `std::random_device` 内部的失败，将遵循
+宿主标准库的无异常失败策略，不会被转换成 `false` 返回值。
 
 ### 统一头文件（`WAes.hpp`）
 
@@ -217,14 +270,18 @@ c++ -std=c++20 -O3 -march=armv8-a+crypto WAes_example.cpp
 
 GCC 和 Clang 的指令集参数作用于整个翻译单元。使用 `-march=native` 生成的程序面向当前 CPU 等级，不能假定可在更老的 x86 CPU 上运行；若需要基线兼容，应不带 AES/VAES 目标参数进行编译，此时使用 Generic 后端。MSVC 构建会编入 x86 硬件实现，并在运行时通过 CPUID 与 XGETBV 检测；`AvailableBackends()` 只返回当前 CPU 和操作系统都能安全执行的实现。
 
-在 AArch64 上，统一头文件只有检测到 `__ARM_FEATURE_CRYPTO` 时才启用 ARM Crypto 后端。若工具链不提供该宏，可以定义 `WAES_ASSUME_ARM_CRYPTO`，但前提是部署硬件确定具备 Crypto Extension。
+在 AArch64 上，统一头文件检测到 `__ARM_FEATURE_AES` 或
+`__ARM_FEATURE_CRYPTO` 时启用 ARM Crypto 后端；存在 Crypto 特性宏时，GCM
+会使用 PMULL 加速。若工具链不提供这两个宏，可以定义
+`WAES_ASSUME_ARM_CRYPTO`，但前提是部署硬件确定具备对应扩展。
 
 ## 安全注意事项
 
-SimpleAES 提供 AES 原语和传统的保密模式，并不是完整的认证加密协议。
+SimpleAES 提供 AES 原语，以及刻意保持精简的一次性 GCM 接口。
 
 - ECB 会暴露重复数据块的模式，通常不适合一般应用数据。
-- CBC 和 CTR 不验证密文完整性。需要配合设计正确的 MAC，或者优先使用认证加密方案。
+- CBC 和 CTR 不验证密文完整性。需要配合设计正确的 MAC；新消息加密可优先使用 GCM。
+- 同一密钥下绝不能重复使用 GCM nonce。认证失败返回 `false`，且不会写入明文输出。
 - CBC 的 IV 必须不可预测；同一个密钥下绝不能重复使用 CTR 的 counter/nonce。
 - Generic 后端为了性能使用与密钥相关的 T-table 查表，缓存访问不是常量时间。
   存在本地计时或缓存侧信道威胁时，应使用硬件后端。
@@ -239,9 +296,10 @@ SimpleAES 提供 AES 原语和传统的保密模式，并不是完整的认证�
 ### 测试组件
 
 - **共享基础设施**：`test_data.hpp`、`test_utils.hpp`、`test_options.hpp`、
-  `test_known_answers.hpp`、`test_template.hpp` 和 `test_entry.hpp`
+  `test_known_answers.hpp`、`test_gcm.hpp`、`test_template.hpp` 和
+  `test_entry.hpp`
 - **独立实现测试**：`test_generic.cpp`、`test_generic_multitu_main.cpp`、
-  `test_generic_multitu.cpp`、`test_aes_ni.cpp`、`test_vaes.cpp`、
+  `test_generic_multitu.cpp`、`test_cxx11_gcm.cpp`、`test_aes_ni.cpp`、`test_vaes.cpp`、
   `test_vaes512.cpp` 和 `test_armv8.cpp`
 - **统一实现测试**：`test_waes.cpp`、`test_waes_adapter.hpp`、
   `test_waes_cross.hpp` 和 `test_waes_regressions.hpp`
@@ -250,11 +308,13 @@ SimpleAES 提供 AES 原语和传统的保密模式，并不是完整的认证�
 
 ### 测试功能
 
-- **标准答案测试**：9 个 FIPS-197 和 NIST SP 800-38A 向量，覆盖
-  ECB、CBC、CTR 以及 128/192/256 位密钥
-- **确定性组合测试**：15 种模式/密钥/填充配置乘以 25 种边界和多块长度
-  （1～271 字节），共 375 次往返测试
-- **校验测试**：6 个非法 PKCS7 拒绝测试，因此每个独立后端共有 390 项功能检查
+- **标准答案测试**：10 个 FIPS-197、NIST SP 800-38A 和 SP 800-38D
+  向量，覆盖 ECB、CBC、CTR 和 GCM
+- **GCM 专项测试**：AAD、部分块/空消息、自动 nonce、精确原地操作、模式切换，
+  以及认证失败不写明文
+- **确定性组合测试**：18 种模式/密钥/填充配置乘以 25 种边界和多块长度
+  （1～271 字节），共 450 次往返测试
+- **校验测试**：6 个非法 PKCS7 拒绝测试，因此每个独立后端共有 471 项功能检查
 - **统一实现验证**：在同一进程中直接比较所有已编入且当前可执行的后端，并覆盖
   guard page、填充、原地操作、非对齐 I/O 和 CTR 计数器回归测试
 - **性能测试**：1、4、16、64 KiB，以及 100 MiB 持续吞吐测试；结果使用 MiB/s
@@ -311,7 +371,7 @@ make sanitize        # 使用 ASan/UBSan 测试 Generic 和基线 WAes
 ```
 
 `make cross-compare` 会自动检测 `Generic`、`WAes` 以及当前支持的硬件后端，
-并比较 375 条确定性组合记录。具体后端列表取决于平台和编译器。
+并比较 450 条确定性组合记录。具体后端列表取决于平台和编译器。
 
 ## 兼容性说明
 

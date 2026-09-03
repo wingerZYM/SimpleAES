@@ -26,8 +26,9 @@ inline std::string getEnvironmentVariable(const char *name) {
 #if defined(_WIN32)
   char *value = nullptr;
   size_t length = 0;
-  if (_dupenv_s(&value, &length, name) != 0 || !value)
+  if (_dupenv_s(&value, &length, name) != 0 || !value) {
     return {};
+  }
   std::string result(value);
   std::free(value);
   return result;
@@ -44,12 +45,14 @@ inline bool shouldWriteToFile(const TestOptions &options) {
 
 inline bool decodeHex(const std::string &hex, size_t expectedBytes,
                       std::vector<uint8_t> &output) {
-  if (hex.size() != expectedBytes * 2)
+  if (hex.size() != expectedBytes * 2) {
     return false;
+  }
 
   for (unsigned char ch : hex) {
-    if (!std::isxdigit(ch))
+    if (!std::isxdigit(ch)) {
       return false;
+    }
   }
 
   output.resize(expectedBytes);

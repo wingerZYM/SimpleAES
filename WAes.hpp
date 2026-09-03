@@ -1,13 +1,21 @@
 #pragma once
 
 #if (defined(__aarch64__) || defined(_M_ARM64)) &&                             \
-    (defined(__ARM_FEATURE_CRYPTO) || defined(WAES_ASSUME_ARM_CRYPTO))
+    (defined(__ARM_FEATURE_AES) || defined(__ARM_FEATURE_CRYPTO) ||            \
+     defined(WAES_ASSUME_ARM_CRYPTO))
 #define WAES_ARMV8
+#if defined(__ARM_FEATURE_CRYPTO) || defined(WAES_ASSUME_ARM_CRYPTO)
+#define WAES_PMULL
+#endif
 #elif defined(__x86_64__) || defined(_M_X64) || defined(__i386__) ||           \
     defined(_M_IX86)
 #if (defined(_MSC_VER) && !defined(__clang__)) ||                              \
     (defined(__SSSE3__) && defined(__AES__))
 #define WAES_X86_SIMD
+#if (defined(_MSC_VER) && !defined(__clang__)) || defined(__PCLMUL__)
+#define WAES_PCLMUL
+#endif
+
 #if (defined(_MSC_VER) && !defined(__clang__)) ||                              \
     (defined(__AVX2__) && defined(__AES__) && defined(__VAES__))
 #define WAES_VAES
@@ -20,9 +28,12 @@
 #endif
 #endif
 
+#include <array>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
+#include <random>
 #include <span>
 #include <vector>
 
@@ -39,7 +50,7 @@
 #include <wmmintrin.h>
 #endif
 
-// AES // ECB/CBC/CTR // PKCS7Padding/ZerosPadding
+// AES // ECB/CBC/CTR/GCM // PKCS7Padding/ZerosPadding
 
 enum class Padding {
   Zeros,
@@ -47,6 +58,14 @@ enum class Padding {
 };
 
 namespace WAes {
+
+inline constexpr size_t GCMNonceSize = 12;
+inline constexpr size_t GCMTagSize = 16;
+
+struct GCMResult {
+  std::array<uint8_t, GCMNonceSize> nonce{};
+  std::array<uint8_t, GCMTagSize> tag{};
+};
 
 namespace detail {
 class Aes;
@@ -93,6 +112,200 @@ template <> struct aesN<256> {
   enum { Nk = 8, Nr = 14 };
 };
 
+inline void gcmStore64BE(uint8_t *out, uint64_t value) noexcept {
+  for (int i = 7; i >= 0; --i) {
+    out[i] = static_cast<uint8_t>(value);
+    value >>= 8;
+  }
+}
+
+inline void gcmShiftRightOne(uint8_t value[16]) noexcept {
+  const uint8_t reductionMask = static_cast<uint8_t>(0u - (value[15] & 1u));
+  for (size_t i = 15; i != 0; --i) {
+    value[i] =
+        static_cast<uint8_t>((value[i] >> 1) | ((value[i - 1] & 1u) << 7));
+  }
+  value[0] >>= 1;
+  value[0] ^= static_cast<uint8_t>(0xe1u & reductionMask);
+}
+
+inline void gcmShiftRightFour(uint8_t value[16]) noexcept {
+  static const std::array<std::array<uint8_t, 2>, 16> reduction = [] {
+    std::array<std::array<uint8_t, 2>, 16> result{};
+    for (size_t nibble = 0; nibble < 16; ++nibble) {
+      uint8_t block[16] = {};
+      block[15] = static_cast<uint8_t>(nibble);
+      for (size_t i = 0; i < 4; ++i) {
+        gcmShiftRightOne(block);
+      }
+      result[nibble][0] = block[0];
+      result[nibble][1] = block[1];
+    }
+    return result;
+  }();
+
+  const uint8_t lowNibble = value[15] & 0x0f;
+  for (size_t i = 15; i != 0; --i) {
+    value[i] = static_cast<uint8_t>((value[i] >> 4) | (value[i - 1] << 4));
+  }
+  value[0] >>= 4;
+  value[0] ^= reduction[lowNibble][0];
+  value[1] ^= reduction[lowNibble][1];
+}
+
+inline void gcmInitialize4BitTable(const uint8_t h[16],
+                                   uint8_t table[16][16]) noexcept {
+  for (size_t nibble = 0; nibble < 16; ++nibble) {
+    std::memset(table[nibble], 0, 16);
+    for (unsigned bit = 0; bit < 4; ++bit) {
+      gcmShiftRightOne(table[nibble]);
+      const uint8_t mask = static_cast<uint8_t>(
+          0u - ((static_cast<unsigned>(nibble) >> bit) & 1u));
+      for (size_t i = 0; i < 16; ++i) {
+        table[nibble][i] ^= h[i] & mask;
+      }
+    }
+  }
+}
+
+inline void gcmMultiply4Bit(uint8_t value[16],
+                            const uint8_t table[16][16]) noexcept {
+  uint8_t product[16] = {};
+  for (size_t i = 16; i != 0; --i) {
+    const uint8_t nibbles[2] = {static_cast<uint8_t>(value[i - 1] & 0x0f),
+                                static_cast<uint8_t>(value[i - 1] >> 4)};
+    for (size_t part = 0; part < 2; ++part) {
+      gcmShiftRightFour(product);
+      for (size_t j = 0; j < 16; ++j) {
+        product[j] ^= table[nibbles[part]][j];
+      }
+    }
+  }
+  std::memcpy(value, product, sizeof(product));
+}
+
+#if defined(WAES_PCLMUL)
+inline __m128i gcmReverseBitsInBytes(__m128i value) noexcept {
+  const __m128i lookup =
+      _mm_setr_epi8(0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
+  const __m128i nibbleMask = _mm_set1_epi8(0x0f);
+  const __m128i low = _mm_and_si128(value, nibbleMask);
+  const __m128i high = _mm_and_si128(_mm_srli_epi16(value, 4), nibbleMask);
+  return _mm_or_si128(_mm_slli_epi16(_mm_shuffle_epi8(lookup, low), 4),
+                      _mm_shuffle_epi8(lookup, high));
+}
+
+inline void gcmMultiplyPCLMUL(uint8_t value[16], const uint8_t h[16]) noexcept {
+  const __m128i lhs = gcmReverseBitsInBytes(
+      _mm_loadu_si128(reinterpret_cast<const __m128i *>(value)));
+  const __m128i rhs = gcmReverseBitsInBytes(
+      _mm_loadu_si128(reinterpret_cast<const __m128i *>(h)));
+  const __m128i p00 = _mm_clmulepi64_si128(lhs, rhs, 0x00);
+  const __m128i p01 = _mm_clmulepi64_si128(lhs, rhs, 0x01);
+  const __m128i p10 = _mm_clmulepi64_si128(lhs, rhs, 0x10);
+  const __m128i p11 = _mm_clmulepi64_si128(lhs, rhs, 0x11);
+  const __m128i middle = _mm_xor_si128(p01, p10);
+  alignas(16) uint64_t low[2];
+  alignas(16) uint64_t cross[2];
+  alignas(16) uint64_t high[2];
+  _mm_store_si128(reinterpret_cast<__m128i *>(low), p00);
+  _mm_store_si128(reinterpret_cast<__m128i *>(cross), middle);
+  _mm_store_si128(reinterpret_cast<__m128i *>(high), p11);
+  uint64_t low0 = low[0];
+  uint64_t low1 = low[1] ^ cross[0];
+  const uint64_t high0 = high[0] ^ cross[1];
+  const uint64_t high1 = high[1];
+  low0 ^= high0 ^ (high0 << 1) ^ (high0 << 2) ^ (high0 << 7);
+  low1 ^= high1 ^ (high1 << 1) ^ (high0 >> 63) ^ (high1 << 2) ^ (high0 >> 62) ^
+          (high1 << 7) ^ (high0 >> 57);
+  const uint64_t overflow = (high1 >> 63) ^ (high1 >> 62) ^ (high1 >> 57);
+  low0 ^= overflow ^ (overflow << 1) ^ (overflow << 2) ^ (overflow << 7);
+  const uint64_t reducedWords[2] = {low0, low1};
+  const __m128i reduced =
+      _mm_loadu_si128(reinterpret_cast<const __m128i *>(reducedWords));
+  _mm_storeu_si128(reinterpret_cast<__m128i *>(value),
+                   gcmReverseBitsInBytes(reduced));
+}
+#endif
+
+#if defined(WAES_PMULL)
+inline void gcmMultiplyPMULL(uint8_t value[16], const uint8_t h[16]) noexcept {
+  const poly64x2_t lhs = vreinterpretq_p64_u8(vrbitq_u8(vld1q_u8(value)));
+  const poly64x2_t rhs = vreinterpretq_p64_u8(vrbitq_u8(vld1q_u8(h)));
+  const poly128_t p00 =
+      vmull_p64(vgetq_lane_p64(lhs, 0), vgetq_lane_p64(rhs, 0));
+  const poly128_t p01 =
+      vmull_p64(vgetq_lane_p64(lhs, 0), vgetq_lane_p64(rhs, 1));
+  const poly128_t p10 =
+      vmull_p64(vgetq_lane_p64(lhs, 1), vgetq_lane_p64(rhs, 0));
+  const poly128_t p11 =
+      vmull_p64(vgetq_lane_p64(lhs, 1), vgetq_lane_p64(rhs, 1));
+  uint64_t low[2];
+  uint64_t firstCross[2];
+  uint64_t secondCross[2];
+  uint64_t high[2];
+  std::memcpy(low, &p00, sizeof(low));
+  std::memcpy(firstCross, &p01, sizeof(firstCross));
+  std::memcpy(secondCross, &p10, sizeof(secondCross));
+  std::memcpy(high, &p11, sizeof(high));
+  uint64_t low0 = low[0];
+  uint64_t low1 = low[1] ^ firstCross[0] ^ secondCross[0];
+  const uint64_t high0 = high[0] ^ firstCross[1] ^ secondCross[1];
+  const uint64_t high1 = high[1];
+  low0 ^= high0 ^ (high0 << 1) ^ (high0 << 2) ^ (high0 << 7);
+  low1 ^= high1 ^ (high1 << 1) ^ (high0 >> 63) ^ (high1 << 2) ^ (high0 >> 62) ^
+          (high1 << 7) ^ (high0 >> 57);
+  const uint64_t overflow = (high1 >> 63) ^ (high1 >> 62) ^ (high1 >> 57);
+  low0 ^= overflow ^ (overflow << 1) ^ (overflow << 2) ^ (overflow << 7);
+  const uint64_t reduced[2] = {low0, low1};
+  vst1q_u8(value,
+           vrbitq_u8(vld1q_u8(reinterpret_cast<const uint8_t *>(reduced))));
+}
+#endif
+
+inline bool gcmValidLengths(size_t textLength, size_t aadLength) noexcept {
+  const uint64_t maxTextLength = (uint64_t(1) << 36) - 32;
+  return static_cast<uint64_t>(textLength) <= maxTextLength &&
+         static_cast<uint64_t>(aadLength) <=
+             (std::numeric_limits<uint64_t>::max)() / 8;
+}
+
+inline void gcmIncrementCounter(uint8_t counter[16]) noexcept {
+  for (size_t i = 16; i != 12; --i) {
+    if (++counter[i - 1] != 0) {
+      break;
+    }
+  }
+}
+
+inline bool gcmTagsEqual(const uint8_t lhs[GCMTagSize],
+                         const uint8_t rhs[GCMTagSize]) noexcept {
+  uint8_t difference = 0;
+  for (size_t i = 0; i < GCMTagSize; ++i) {
+    difference |= lhs[i] ^ rhs[i];
+  }
+  return difference == 0;
+}
+
+inline void gcmRandomNonce(uint8_t nonce[GCMNonceSize]) {
+  static thread_local std::mt19937 generator = [] {
+    std::random_device source;
+    std::array<uint32_t, 8> seed{};
+    for (size_t i = 0; i < seed.size(); ++i) {
+      seed[i] = source();
+    }
+    std::seed_seq sequence(seed.begin(), seed.end());
+    return std::mt19937(sequence);
+  }();
+  for (size_t offset = 0; offset < GCMNonceSize; offset += 4) {
+    const uint32_t word = generator();
+    nonce[offset] = static_cast<uint8_t>(word >> 24);
+    nonce[offset + 1] = static_cast<uint8_t>(word >> 16);
+    nonce[offset + 2] = static_cast<uint8_t>(word >> 8);
+    nonce[offset + 3] = static_cast<uint8_t>(word);
+  }
+}
+
 class Aes {
 protected:
   enum {
@@ -103,9 +316,13 @@ protected:
     ECB,
     CBC,
     CTR,
+    GCM,
   };
   Padding m_padding;
   Mode m_mode;
+  std::vector<uint8_t> m_aad;
+  alignas(16) uint8_t m_gcmH[16] = {};
+  alignas(16) uint8_t m_gcmTable[16][16] = {};
 
   Aes(Padding padding) : m_padding(padding), m_mode(Mode::ECB) {}
   Aes(const Aes &) = default;
@@ -125,6 +342,79 @@ protected:
     }
 
     return true;
+  }
+
+  virtual void cipherGCMBlock(const uint8_t input[16],
+                              uint8_t output[16]) const = 0;
+
+  virtual void multiplyGCM(uint8_t value[16]) const {
+    gcmMultiply4Bit(value, m_gcmTable);
+  }
+
+  void updateGCMHash(uint8_t hash[16], const uint8_t *data,
+                     size_t length) const {
+    while (length >= 16) {
+      for (size_t i = 0; i < 16; ++i) {
+        hash[i] ^= data[i];
+      }
+      multiplyGCM(hash);
+      data += 16;
+      length -= 16;
+    }
+    if (length != 0) {
+      uint8_t block[16] = {};
+      std::memcpy(block, data, length);
+      for (size_t i = 0; i < 16; ++i) {
+        hash[i] ^= block[i];
+      }
+      multiplyGCM(hash);
+    }
+  }
+
+  void initializeGCMHash() {
+    const uint8_t zero[16] = {};
+    cipherGCMBlock(zero, m_gcmH);
+    gcmInitialize4BitTable(m_gcmH, m_gcmTable);
+  }
+
+  virtual void cryptGCM(const uint8_t *input, size_t length, uint8_t *output,
+                        const uint8_t nonce[GCMNonceSize]) const {
+    uint8_t counter[16] = {};
+    std::memcpy(counter, nonce, GCMNonceSize);
+    counter[15] = 1;
+    while (length != 0) {
+      uint8_t stream[16];
+      gcmIncrementCounter(counter);
+      cipherGCMBlock(counter, stream);
+      const size_t chunk = length < 16 ? length : 16;
+      for (size_t i = 0; i < chunk; ++i) {
+        output[i] = input[i] ^ stream[i];
+      }
+      input += chunk;
+      output += chunk;
+      length -= chunk;
+    }
+  }
+
+  void calculateGCMTag(const uint8_t *ciphertext, size_t textLength,
+                       const uint8_t nonce[GCMNonceSize],
+                       uint8_t tag[GCMTagSize]) const {
+    uint8_t hash[16] = {};
+    updateGCMHash(hash, m_aad.data(), m_aad.size());
+    updateGCMHash(hash, ciphertext, textLength);
+    uint8_t lengths[16];
+    gcmStore64BE(lengths, static_cast<uint64_t>(m_aad.size()) * 8);
+    gcmStore64BE(lengths + 8, static_cast<uint64_t>(textLength) * 8);
+    updateGCMHash(hash, lengths, sizeof(lengths));
+
+    uint8_t j0[16] = {};
+    std::memcpy(j0, nonce, GCMNonceSize);
+    j0[15] = 1;
+    uint8_t mask[16];
+    cipherGCMBlock(j0, mask);
+    for (size_t i = 0; i < GCMTagSize; ++i) {
+      tag[i] = hash[i] ^ mask[i];
+    }
   }
 
   virtual bool cipherECB(const void *in, size_t inLength, void *out,
@@ -221,8 +511,8 @@ public:
 
   size_t SumCipherLength(size_t nInLen) const {
     constexpr size_t blockSize = Nb * 4;
-    if (m_mode == Mode::CTR) {
-      // In CTR mode, the length is not padded.
+    if (m_mode == Mode::CTR || m_mode == Mode::GCM) {
+      // CTR and GCM do not pad the payload.
       return nInLen;
     } else if (m_padding == Padding::Zeros) {
       return ((nInLen + blockSize - 1) / blockSize) * blockSize;
@@ -266,6 +556,96 @@ public:
     SetCounter(counterData, sizeof(counterData));
   }
 
+  bool SetAAD(const void *aad = nullptr, size_t aadLength = 0) {
+    if ((aadLength != 0 && aad == nullptr) || !gcmValidLengths(0, aadLength)) {
+      return false;
+    }
+    std::vector<uint8_t> next;
+    if (aadLength != 0) {
+      const auto *bytes = reinterpret_cast<const uint8_t *>(aad);
+      next.assign(bytes, bytes + aadLength);
+    }
+    m_aad.swap(next);
+    m_mode = Mode::GCM;
+    return true;
+  }
+
+  bool CipherGCM(const void *in, size_t inLength, void *out, size_t &outLength,
+                 const void *nonce, size_t nonceLength, void *tag,
+                 size_t &tagLength) const {
+    const size_t outputCapacity = outLength;
+    const size_t tagCapacity = tagLength;
+    outLength = 0;
+    tagLength = 0;
+    if (m_mode != Mode::GCM || nonceLength != GCMNonceSize ||
+        nonce == nullptr || tag == nullptr || outputCapacity < inLength ||
+        tagCapacity < GCMTagSize ||
+        (inLength != 0 && (in == nullptr || out == nullptr)) ||
+        !gcmValidLengths(inLength, m_aad.size())) {
+      return false;
+    }
+
+    const auto *nonceBytes = reinterpret_cast<const uint8_t *>(nonce);
+    auto *output = reinterpret_cast<uint8_t *>(out);
+    if (inLength != 0) {
+      cryptGCM(reinterpret_cast<const uint8_t *>(in), inLength, output,
+               nonceBytes);
+    }
+    uint8_t calculatedTag[GCMTagSize];
+    calculateGCMTag(output, inLength, nonceBytes, calculatedTag);
+    std::memcpy(tag, calculatedTag, sizeof(calculatedTag));
+    outLength = inLength;
+    tagLength = GCMTagSize;
+    return true;
+  }
+
+  bool CipherGCM(const void *in, size_t inLength, void *out, size_t &outLength,
+                 GCMResult &result) const {
+    GCMResult next;
+    gcmRandomNonce(next.nonce.data());
+    size_t tagLength = next.tag.size();
+    if (!CipherGCM(in, inLength, out, outLength, next.nonce.data(),
+                   next.nonce.size(), next.tag.data(), tagLength)) {
+      return false;
+    }
+    result = next;
+    return true;
+  }
+
+  bool InvCipherGCM(const void *in, size_t inLength, void *out,
+                    size_t &outLength, const void *nonce, size_t nonceLength,
+                    const void *tag, size_t tagLength) const {
+    const size_t outputCapacity = outLength;
+    outLength = 0;
+    if (m_mode != Mode::GCM || nonceLength != GCMNonceSize ||
+        tagLength != GCMTagSize || nonce == nullptr || tag == nullptr ||
+        outputCapacity < inLength ||
+        (inLength != 0 && (in == nullptr || out == nullptr)) ||
+        !gcmValidLengths(inLength, m_aad.size())) {
+      return false;
+    }
+
+    const auto *input = reinterpret_cast<const uint8_t *>(in);
+    const auto *nonceBytes = reinterpret_cast<const uint8_t *>(nonce);
+    uint8_t calculatedTag[GCMTagSize];
+    calculateGCMTag(input, inLength, nonceBytes, calculatedTag);
+    if (!gcmTagsEqual(calculatedTag, reinterpret_cast<const uint8_t *>(tag))) {
+      return false;
+    }
+    if (inLength != 0) {
+      cryptGCM(input, inLength, reinterpret_cast<uint8_t *>(out), nonceBytes);
+    }
+    outLength = inLength;
+    return true;
+  }
+
+  bool InvCipherGCM(const void *in, size_t inLength, void *out,
+                    size_t &outLength, const GCMResult &result) const {
+    return InvCipherGCM(in, inLength, out, outLength, result.nonce.data(),
+                        result.nonce.size(), result.tag.data(),
+                        result.tag.size());
+  }
+
   bool Cipher(const void *in, size_t inLength, void *out,
               size_t &outLength) const {
     switch (m_mode) {
@@ -275,6 +655,9 @@ public:
       return cipherCBC(in, inLength, out, outLength);
     case Mode::CTR:
       return cipherCTR(in, inLength, out, outLength);
+    case Mode::GCM:
+      outLength = 0;
+      return false;
     }
 
     return false;
@@ -296,6 +679,9 @@ public:
       return invCipherCBC(in, inLength, out, outLength);
     case Mode::CTR:
       return cipherCTR(in, inLength, out, outLength);
+    case Mode::GCM:
+      outLength = 0;
+      return false;
     }
 
     return false;
@@ -503,6 +889,8 @@ private:
       m_w[i] = vaesimcq_u8(m_w[Nr * 2 - i]);
     }
 
+    initializeGCMHash();
+
     if (iv) { // iv padding zero
       m_mode = Mode::CBC;
       memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
@@ -514,6 +902,21 @@ private:
       state = vaesmcq_u8(vaeseq_u8(state, m_w[r]));
     }
     state = veorq_u8(vaeseq_u8(state, m_w[Nr - 1]), m_w[Nr]);
+  }
+
+  void cipherGCMBlock(const uint8_t input[16],
+                      uint8_t output[16]) const override {
+    uint8x16_t state = vld1q_u8(input);
+    cipher(state);
+    vst1q_u8(output, state);
+  }
+
+  void multiplyGCM(uint8_t value[16]) const override {
+#if defined(WAES_PMULL)
+    gcmMultiplyPMULL(value, m_gcmH);
+#else
+    Aes::multiplyGCM(value);
+#endif
   }
 
   void invCipher(uint8x16_t &state) const {
@@ -765,6 +1168,7 @@ enum class X86ImplType {
 
 struct X86Capabilities {
   bool aesNi = false;
+  bool pclmul = false;
   bool vaes = false;
   bool vaes512 = false;
 };
@@ -803,6 +1207,7 @@ inline const X86Capabilities &getX86Capabilities() {
 
     cpuid(regs, 1);
     result.aesNi = (regs[2] & (1 << 25)) != 0;
+    result.pclmul = (regs[2] & (1 << 1)) != 0;
 
     const bool osxsave = (regs[2] & (1 << 27)) != 0;
     const bool avx = (regs[2] & (1 << 28)) != 0;
@@ -993,6 +1398,8 @@ protected:
       m_w[i] = _mm_aesimc_si128(m_w[Nr * 2 - i]);
     }
 
+    initializeGCMHash();
+
     if (iv) { // iv padding zero
       m_mode = Mode::CBC;
       memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
@@ -1005,6 +1412,23 @@ protected:
       state = _mm_aesenc_si128(state, m_w[r]);
     }
     state = _mm_aesenclast_si128(state, m_w[Nr]);
+  }
+
+  void cipherGCMBlock(const uint8_t input[16],
+                      uint8_t output[16]) const override {
+    __m128i state = _mm_loadu_si128(reinterpret_cast<const __m128i *>(input));
+    cipher(state);
+    _mm_storeu_si128(reinterpret_cast<__m128i *>(output), state);
+  }
+
+  void multiplyGCM(uint8_t value[16]) const override {
+#if defined(WAES_PCLMUL)
+    if (getX86Capabilities().pclmul) {
+      gcmMultiplyPCLMUL(value, m_gcmH);
+      return;
+    }
+#endif
+    Aes::multiplyGCM(value);
   }
 
   void invCipher(__m128i &state) const {
@@ -1303,6 +1727,44 @@ private:
     state = _mm256_aesdeclast_epi128(state, m_w256[0]);
   }
 
+  void cryptGCM(const uint8_t *input, size_t length, uint8_t *output,
+                const uint8_t nonce[GCMNonceSize]) const override {
+    alignas(32) uint8_t counters[32] = {};
+    memcpy(counters, nonce, GCMNonceSize);
+    counters[15] = 1;
+    while (length >= 32) {
+      gcmIncrementCounter(counters);
+      memcpy(counters + 16, counters, 16);
+      gcmIncrementCounter(counters + 16);
+      __m256i stream =
+          _mm256_load_si256(reinterpret_cast<const __m256i *>(counters));
+      cipher(stream);
+      const __m256i plaintext =
+          _mm256_loadu_si256(reinterpret_cast<const __m256i *>(input));
+      _mm256_storeu_si256(reinterpret_cast<__m256i *>(output),
+                          _mm256_xor_si256(plaintext, stream));
+      memcpy(counters, counters + 16, 16);
+      input += 32;
+      output += 32;
+      length -= 32;
+    }
+    while (length != 0) {
+      gcmIncrementCounter(counters);
+      __m128i stream =
+          _mm_load_si128(reinterpret_cast<const __m128i *>(counters));
+      WAesNi<N>::cipher(stream);
+      alignas(16) uint8_t bytes[16];
+      _mm_store_si128(reinterpret_cast<__m128i *>(bytes), stream);
+      const size_t chunk = length < 16 ? length : 16;
+      for (size_t i = 0; i < chunk; ++i) {
+        output[i] = input[i] ^ bytes[i];
+      }
+      input += chunk;
+      output += chunk;
+      length -= chunk;
+    }
+  }
+
   virtual bool cipherECB(const void *in, size_t inLength, void *out,
                          size_t &outLength) const override {
     auto nNeedLen = WAesNi<N>::SumCipherLength(inLength);
@@ -1485,6 +1947,44 @@ private:
       state = _mm512_aesdec_epi128(state, m_w512[r]);
     }
     state = _mm512_aesdeclast_epi128(state, m_w512[0]);
+  }
+
+  void cryptGCM(const uint8_t *input, size_t length, uint8_t *output,
+                const uint8_t nonce[GCMNonceSize]) const override {
+    alignas(64) uint8_t counters[64] = {};
+    memcpy(counters, nonce, GCMNonceSize);
+    counters[15] = 1;
+    while (length >= 64) {
+      for (size_t lane = 0; lane < 4; ++lane) {
+        if (lane != 0) {
+          memcpy(counters + lane * 16, counters + (lane - 1) * 16, 16);
+        }
+        gcmIncrementCounter(counters + lane * 16);
+      }
+      __m512i stream = _mm512_load_si512(counters);
+      cipher(stream);
+      const __m512i plaintext = _mm512_loadu_si512(input);
+      _mm512_storeu_si512(output, _mm512_xor_si512(plaintext, stream));
+      memcpy(counters, counters + 48, 16);
+      input += 64;
+      output += 64;
+      length -= 64;
+    }
+    while (length != 0) {
+      gcmIncrementCounter(counters);
+      __m128i stream =
+          _mm_load_si128(reinterpret_cast<const __m128i *>(counters));
+      WAesNi<N>::cipher(stream);
+      alignas(16) uint8_t bytes[16];
+      _mm_store_si128(reinterpret_cast<__m128i *>(bytes), stream);
+      const size_t chunk = length < 16 ? length : 16;
+      for (size_t i = 0; i < chunk; ++i) {
+        output[i] = input[i] ^ bytes[i];
+      }
+      input += chunk;
+      output += chunk;
+      length -= chunk;
+    }
   }
 
   virtual bool cipherECB(const void *in, size_t inLength, void *out,
@@ -2225,6 +2725,8 @@ private:
       keyExpansion(reinterpret_cast<const uint8_t *>(key));
     }
 
+    initializeGCMHash();
+
     if (iv) { // iv padding zero
       m_mode = Mode::CBC;
       memcpy(m_iv, iv, ivLength > 16 ? 16 : ivLength);
@@ -2260,13 +2762,17 @@ private:
 
     // Build decryption round key schedule (equivalent inverse cipher, FIPS 197
     // §5.3.5)
-    for (int i = 0; i < Nb; ++i)
+    for (int i = 0; i < Nb; ++i) {
       m_dw[i] = m_w[Nb * Nr + i];
-    for (int r = 1; r < Nr; ++r)
-      for (int i = 0; i < Nb; ++i)
+    }
+    for (int r = 1; r < Nr; ++r) {
+      for (int i = 0; i < Nb; ++i) {
         m_dw[Nb * r + i] = invMixCol(m_w[Nb * (Nr - r) + i]);
-    for (int i = 0; i < Nb; ++i)
+      }
+    }
+    for (int i = 0; i < Nb; ++i) {
       m_dw[Nb * Nr + i] = m_w[i];
+    }
   }
 
   void cipherWords(uint32_t s0, uint32_t s1, uint32_t s2, uint32_t s3,
@@ -2347,6 +2853,11 @@ private:
   void cipher(const uint8_t *input, uint8_t *output) const {
     cipherWords(load32LE(input), load32LE(input + 4), load32LE(input + 8),
                 load32LE(input + 12), output);
+  }
+
+  void cipherGCMBlock(const uint8_t input[16],
+                      uint8_t output[16]) const override {
+    cipher(input, output);
   }
 
   void cipherXor(const uint8_t *input, const uint8_t *xorBlock,
