@@ -29,6 +29,8 @@
 #endif
 
 #include <array>
+#include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -60,6 +62,7 @@
 #endif
 #endif
 #include <span>
+#include <type_traits>
 #include <vector>
 
 #if defined(WAES_ARMV8)
@@ -124,6 +127,33 @@ Ptr Create(Backend backend, const void *key, size_t keyLength,
            Padding padding = Padding::PKCS7);
 
 namespace detail {
+
+// Byte views expose their storage through data(); no value_type is required.
+// Exclude bool and arbitrary objects whose representations cannot hold ciphertext.
+template <typename T>
+concept ByteElement =
+    (std::is_integral_v<T> && !std::is_same_v<T, bool> && sizeof(T) == 1) ||
+    std::is_same_v<T, std::byte>;
+
+template <typename P>
+concept BytePointer =
+    std::is_pointer_v<P> &&
+    !std::is_volatile_v<std::remove_pointer_t<P>> &&
+    ByteElement<std::remove_cv_t<std::remove_pointer_t<P>>>;
+
+template <typename T>
+concept ByteInput = requires(const T &in) {
+  { in.data() } -> BytePointer;
+  { in.size() } -> std::convertible_to<size_t>;
+};
+
+template <typename T>
+concept ByteOutput = requires(T &out, size_t length) {
+  { out.data() } -> BytePointer;
+  requires (!std::is_const_v<std::remove_pointer_t<decltype(out.data())>>);
+  out.resize(length);
+  out.clear();
+};
 
 template <int> struct aesN;
 
@@ -822,7 +852,9 @@ public:
     return false;
   }
 
-  template <typename I, typename O> bool Cipher(const I &in, O &out) const {
+  template <ByteInput I, ByteOutput O>
+    requires requires(O &out, O &other) { out.swap(other); }
+  bool Cipher(const I &in, O &out) const {
     size_t outputLength = SumCipherLength(in.size());
     if (m_mode == Mode::GCM || outputLength < in.size()) {
       out.clear();
@@ -849,7 +881,7 @@ public:
 
   // Empty output can mean failure or a successful empty CTR/zero-padded message.
   // Use the bool overload when the distinction matters.
-  template <typename I> std::vector<uint8_t> Cipher(const I &in) const {
+  template <ByteInput I> std::vector<uint8_t> Cipher(const I &in) const {
     std::vector<uint8_t> out;
     Cipher(in, out);
     return out;
@@ -857,6 +889,12 @@ public:
 
   bool InvCipher(const void *in, size_t inLength, void *out,
                  size_t &outLength) const {
+    // Zero padding maps an empty message to an empty ciphertext.
+    // Return before any backend performs last-block subtraction or loads.
+    if (inLength == 0 && (m_mode == Mode::ECB || m_mode == Mode::CBC)) {
+      outLength = 0;
+      return m_padding == Padding::Zeros;
+    }
     switch (m_mode) {
     case Mode::ECB:
       return invCipherECB(in, inLength, out, outLength);
@@ -872,7 +910,8 @@ public:
     return false;
   }
 
-  template <typename I, typename O> bool InvCipher(const I &in, O &out) const {
+  template <ByteInput I, ByteOutput O>
+  bool InvCipher(const I &in, O &out) const {
     size_t outLength = in.size();
     out.resize(outLength);
     if (!InvCipher(in.data(), in.size(), out.data(), outLength)) {

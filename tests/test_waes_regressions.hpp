@@ -8,7 +8,9 @@
 #include <cstring>
 #include <iostream>
 #include <memory_resource>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #if defined(_WIN32)
@@ -20,6 +22,71 @@
 #endif
 
 namespace WAesRegressionTests {
+
+template <typename I>
+concept CanReturnCipher = requires(const WAes::detail::Aes &aes, const I &in) {
+  aes.Cipher(in);
+};
+
+template <typename I, typename O>
+concept CanCipherInto = requires(const WAes::detail::Aes &aes, const I &in, O &out) {
+  aes.Cipher(in, out);
+};
+
+template <typename I, typename O>
+concept CanInvCipherInto = requires(const WAes::detail::Aes &aes, const I &in, O &out) {
+  aes.InvCipher(in, out);
+};
+
+template <typename T>
+constexpr bool acceptsByteInput =
+    CanReturnCipher<T> && CanCipherInto<T, std::vector<uint8_t>> &&
+    CanInvCipherInto<T, std::vector<uint8_t>>;
+template <typename T>
+constexpr bool rejectsByteInput =
+    !CanReturnCipher<T> && !CanCipherInto<T, std::vector<uint8_t>> &&
+    !CanInvCipherInto<T, std::vector<uint8_t>>;
+template <typename T>
+constexpr bool acceptsByteOutput =
+    CanCipherInto<std::vector<uint8_t>, T> &&
+    CanInvCipherInto<std::vector<uint8_t>, T>;
+template <typename T>
+constexpr bool rejectsByteOutput =
+    !CanCipherInto<std::vector<uint8_t>, T> &&
+    !CanInvCipherInto<std::vector<uint8_t>, T>;
+
+static_assert(acceptsByteInput<std::vector<uint8_t>> &&
+              acceptsByteInput<std::vector<char>> &&
+              acceptsByteInput<std::vector<signed char>> &&
+              acceptsByteInput<std::vector<std::byte>> &&
+              acceptsByteInput<std::pmr::vector<std::byte>> &&
+              acceptsByteInput<std::string> &&
+              acceptsByteInput<std::string_view> &&
+              acceptsByteInput<std::array<char, 17>> &&
+              acceptsByteInput<std::span<uint8_t>> &&
+              acceptsByteInput<std::span<const std::byte>>);
+static_assert(acceptsByteOutput<std::vector<uint8_t>> &&
+              acceptsByteOutput<std::vector<char>> &&
+              acceptsByteOutput<std::vector<signed char>> &&
+              acceptsByteOutput<std::vector<std::byte>> &&
+              acceptsByteOutput<std::pmr::vector<std::byte>> &&
+              acceptsByteOutput<std::string>);
+static_assert(rejectsByteInput<std::vector<uint32_t>> &&
+              rejectsByteInput<std::vector<uint16_t>> &&
+              rejectsByteInput<std::vector<double>> &&
+              rejectsByteInput<std::vector<bool>> &&
+              rejectsByteInput<std::array<bool, 4>> &&
+              rejectsByteInput<std::span<const uint32_t>> &&
+              rejectsByteInput<std::span<volatile uint8_t>>);
+static_assert(rejectsByteOutput<std::vector<uint32_t>> &&
+              rejectsByteOutput<std::vector<uint16_t>> &&
+              rejectsByteOutput<std::vector<double>> &&
+              rejectsByteOutput<std::vector<bool>> &&
+              rejectsByteOutput<const std::vector<uint8_t>> &&
+              rejectsByteOutput<std::span<uint8_t>> &&
+              rejectsByteOutput<std::span<const uint8_t>> &&
+              rejectsByteOutput<std::string_view> &&
+              rejectsByteOutput<std::array<std::byte, 32>>);
 
 class GuardedBytes {
 public:
@@ -275,6 +342,86 @@ inline bool testContainerWithoutAllocator(WAes::Backend backend) {
   return aes->Cipher(output, output) && output.bytes == expected;
 }
 
+template <typename Container>
+bool testByteContainerRoundTrip(WAes::Backend backend) {
+  const uint8_t key[16] = {};
+  auto aes = WAes::Create<128>(backend, key, sizeof(key), key, sizeof(key));
+  if (!aes) {
+    return false;
+  }
+  using Byte = typename Container::value_type;
+  Container input;
+  input.resize(17);
+  for (size_t i = 0; i < input.size(); ++i) {
+    input[i] = static_cast<Byte>(0x40 + i);
+  }
+  std::vector<uint8_t> expected(aes->SumCipherLength(input.size()));
+  size_t length = expected.size();
+  if (!aes->Cipher(input.data(), input.size(), expected.data(), length) ||
+      length != 32) {
+    return false;
+  }
+  const std::span<const Byte> view(input.data(), input.size());
+  Container encrypted;
+  if (aes->Cipher(view) != expected || !aes->Cipher(view, encrypted) ||
+      encrypted.size() != expected.size() ||
+      std::memcmp(encrypted.data(), expected.data(), expected.size()) != 0) {
+    return false;
+  }
+  const std::span<const Byte> encryptedView(encrypted.data(), encrypted.size());
+  Container recovered;
+  if (!aes->InvCipher(encryptedView, recovered) || recovered != input) {
+    return false;
+  }
+  Container inplace = input;
+  return aes->Cipher(inplace, inplace) && inplace == encrypted &&
+         aes->InvCipher(inplace, inplace) && inplace == input;
+}
+
+inline bool testExplicitByteView(WAes::Backend backend) {
+  const uint8_t key[16] = {};
+  auto aes = WAes::Create<128>(backend, key, sizeof(key));
+  if (!aes) {
+    return false;
+  }
+  const std::vector<uint32_t> words = {
+      0x12345678, 0xabcdef01, 0x23456789, 0xabcdef02};
+  const auto bytes = std::as_bytes(std::span(words));
+  const auto encrypted = aes->Cipher(bytes);
+  std::vector<std::byte> recovered;
+  return bytes.size() == 16 && encrypted.size() == 32 &&
+         aes->InvCipher(encrypted, recovered) && recovered.size() == 16 &&
+         std::equal(recovered.begin(), recovered.end(), bytes.begin());
+}
+
+inline bool testEmptyContainers(WAes::Backend backend) {
+  const uint8_t key[16] = {};
+  const std::vector<uint8_t> empty;
+  for (bool cbc : {false, true}) {
+    auto aes = WAes::Create<128>(backend, key, sizeof(key), cbc ? key : nullptr,
+                                 sizeof(key), Padding::Zeros);
+    if (!aes) {
+      return false;
+    }
+    std::vector<uint8_t> encrypted{0xa5};
+    std::vector<std::byte> recovered{std::byte{0xa5}};
+    if (!aes->Cipher(empty, encrypted) || !encrypted.empty() ||
+        !aes->InvCipher(encrypted, recovered) || !recovered.empty()) {
+      return false;
+    }
+    aes->SetPadding(Padding::PKCS7);
+    recovered.push_back(std::byte{0xa5});
+    if (aes->InvCipher(encrypted, recovered) || !recovered.empty()) {
+      return false;
+    }
+    if (!aes->Cipher(empty, encrypted) || encrypted.size() != 16 ||
+        !aes->InvCipher(encrypted, recovered) || !recovered.empty()) {
+      return false;
+    }
+  }
+  return true;
+}
+
 inline bool run() {
   using namespace TestData;
 
@@ -500,6 +647,15 @@ inline bool run() {
     check(testContainerAllocators(backend), name + " PMR allocator preservation");
     check(testContainerWithoutAllocator(backend),
           name + " allocator-free container interface");
+    check(testByteContainerRoundTrip<std::vector<uint8_t>>(backend) &&
+              testByteContainerRoundTrip<std::vector<char>>(backend) &&
+              testByteContainerRoundTrip<std::vector<signed char>>(backend) &&
+              testByteContainerRoundTrip<std::vector<std::byte>>(backend) &&
+              testByteContainerRoundTrip<std::pmr::vector<std::byte>>(backend) &&
+              testByteContainerRoundTrip<std::string>(backend),
+          name + " byte containers and span inputs");
+    check(testExplicitByteView(backend), name + " explicit multi-byte storage view");
+    check(testEmptyContainers(backend), name + " empty container round trips");
   }
 
   std::array<uint8_t, 16> serializedCounter = {

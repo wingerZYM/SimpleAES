@@ -196,6 +196,10 @@ if (!aes.InvCipher(ciphertext, cipherLen, plaintext, plainLen)) {
 
 Zero padding 只在尾块不足 16 字节时补零；输入已经按块对齐时不会额外增加一块。由于明文末尾的零与填充无法区分，Zero-padding 解密会移除尾部零。PKCS7 则始终添加填充，输入按块对齐时也会增加一个完整的 16 字节填充块。
 
+ECB/CBC 使用 Zero padding 时，空明文加密为空密文，该空密文可以成功解密，
+并将 `outLength` 设为零；此路径不访问输入输出缓冲区，允许传入空指针。
+PKCS7 仍拒绝零长度密文：PKCS7 的空明文加密后包含一个完整填充块。
+
 CTR 将传入的 16 字节计数块整体视为一个大端整数，并按模 2^128 递增，
 与 OpenSSL 的 CTR 约定一致。数值重载 `SetCounter(iv, nonce, counter)`
 会将三个字段都按大端序列化。
@@ -225,11 +229,28 @@ aes->InvCipher(ct.data(), ct.size(), pt.data(), plainLen);
 ```
 
 容器重载（直接返回 `std::vector`）：
+
+容器重载仅接受连续字节数据：单字节整数元素（例如 `char`、`uint8_t`，不含
+`bool`）或 `std::byte`。三个容器重载均在编译期拒绝多字节输入/输出元素。
+字节 span、array 和 string_view 可作为输入；输出容器须提供可写字节存储、
+`resize`、`clear`，加密还需支持 `swap`。固定长度 span 不能作为此重载的
+可调整长度输出。PMR 容器和没有 `value_type` 的自定义字节容器仍然支持。
+
 ```c++
 auto ct = aes->Cipher(plainVec);     // 加密 vector → vector
 std::vector<uint8_t> pt;
 aes->InvCipher(ct, pt);              // 解密 vector → vector
 ```
+
+确需加密多字节数据的本机对象表示时，应显式转换为字节视图：
+
+```c++
+std::vector<uint32_t> words = {0x12345678, 0xabcdef01};
+auto ct = aes->Cipher(std::as_bytes(std::span(words)));
+```
+
+这样会处理所有字节，但不会自动定义可移植的序列化格式；字节序和对象布局仍由
+调用方负责。指针接口继续使用显式字节长度和输出容量。
 
 显式指定后端：
 ```c++

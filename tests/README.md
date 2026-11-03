@@ -59,7 +59,9 @@ Each standalone implementation tests:
 - 10 standard known-answer encryption/decryption vectors
 - 1 OpenSSL-compatible full-width CTR carry vector
 - 5 focused GCM behavior and failure tests
-- 7 boundary checks: padded-length overflow, empty ECB/CBC plaintext, and forked nonces (fork skipped on Windows)
+- 7 boundary checks: padded-length overflow, complete empty ECB/CBC round trips
+  with Zero/PKCS7 padding, rejection of empty PKCS7 ciphertext and partial blocks,
+  and forked nonces (fork skipped on Windows)
 - 450 deterministic round trips: 18 mode/key/padding configurations across
   25 boundary and multi-block lengths
 - 6 deterministic malformed-PKCS7 rejection cases
@@ -70,6 +72,11 @@ That gives 479 functional checks per standalone backend. The unified test also
 runs the same shared suite, directly cross-validates its available backends, and
 runs backend availability, guard-page, padding, in-place, unaligned-I/O,
 scoped-AAD restoration, container failure propagation, and full-128-bit CTR counter regressions.
+
+Unified container tests include compile-time acceptance of byte inputs/outputs
+and rejection of multi-byte elements or non-resizable/const outputs. Runtime
+checks cover char/byte/PMR containers, span inputs, explicit byte views of integer
+storage, in-place operations, allocator preservation, and empty-message round trips.
 
 `make run-build-checks` executes the C++11 GCM/heap tests (new, arrays, vector,
 make_shared and enclosing members) and injected RNG-failure checks for each available

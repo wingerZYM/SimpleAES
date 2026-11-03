@@ -621,6 +621,12 @@ public:
 
   bool InvCipher(const void *in, size_t inLength, void *out,
                  size_t &outLength) const {
+    // Zero padding maps an empty message to an empty ciphertext.
+    // Return before any backend performs last-block subtraction or loads.
+    if (inLength == 0 && (m_mode == Mode::ECB || m_mode == Mode::CBC)) {
+      outLength = 0;
+      return m_padding == Padding::Zeros;
+    }
     switch (m_mode) {
     case Mode::ECB:
       return invCipherECB(in, inLength, out, outLength);

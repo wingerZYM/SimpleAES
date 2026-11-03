@@ -223,6 +223,12 @@ Key lengths intentionally preserve the library's legacy compatibility behavior: 
 
 Zero padding adds bytes only when the final block is partial; an already block-aligned input does not gain another block. Because trailing plaintext zeroes are indistinguishable from padding, Zero-padding decryption removes trailing zeroes. PKCS7 always adds padding, including a complete 16-byte padding block for aligned input.
 
+For ECB/CBC with Zero padding, empty plaintext encrypts to empty ciphertext,
+and decrypting that ciphertext succeeds with `outLength = 0`; neither buffer
+is accessed, so null pointers are allowed for this empty operation.
+PKCS7 still rejects zero-length ciphertext: an encrypted empty PKCS7 message
+contains one full padding block.
+
 CTR treats the supplied 16-byte value as one big-endian integer and increments
 the complete counter block modulo 2^128, matching OpenSSL's CTR convention. The
 numeric `SetCounter(iv, nonce, counter)` overload serializes all fields in
@@ -254,11 +260,31 @@ aes->InvCipher(ct.data(), ct.size(), pt.data(), plainLen);
 
 Container overloads (returns `std::vector` directly):
 
+These overloads accept contiguous byte data only: single-byte integer elements
+(such as `char` and `uint8_t`, excluding `bool`) or `std::byte`. All three
+container overloads reject multi-byte input/output elements at compile time.
+Byte spans, arrays and string views can be inputs. Output containers must expose
+writable byte storage, `resize` and `clear` (and `swap` for encryption);
+a fixed-size span is not a resizable output container. PMR containers and
+custom byte containers without a `value_type` remain supported.
+
 ```c++
 auto ct = aes->Cipher(plainVec);          // encrypt vector → vector
 std::vector<uint8_t> pt;
 aes->InvCipher(ct, pt);                   // decrypt vector → vector
 ```
+
+To intentionally encrypt the native object representation of multi-byte data,
+provide an explicit byte view:
+
+```c++
+std::vector<uint32_t> words = {0x12345678, 0xabcdef01};
+auto ct = aes->Cipher(std::as_bytes(std::span(words)));
+```
+
+This preserves every byte but does not define a portable serialization format;
+byte order and object layout remain the caller's responsibility. The pointer
+overloads continue to take explicit byte lengths and output capacities.
 
 Explicit backend selection:
 

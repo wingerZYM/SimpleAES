@@ -81,6 +81,23 @@ template <int N> bool emptyPlaintext() {
     if (!zero.Cipher(nullptr, 0, nullptr, size) || size != 0) {
       return false;
     }
+    // A valid empty result must round-trip without touching either pointer,
+    // even when the caller supplies nonzero output capacity.
+    for (size_t capacity : {size_t(0), size_t(17)}) {
+      recovered = capacity;
+      if (!zero.InvCipher(nullptr, size, nullptr, recovered) || recovered != 0) {
+        return false;
+      }
+      recovered = capacity;
+      if (aes.InvCipher(nullptr, 0, nullptr, recovered) || recovered != 0) {
+        return false; // Empty ciphertext is still invalid with PKCS7.
+      }
+    }
+    uint8_t partial = 0xa5;
+    recovered = 1;
+    if (zero.InvCipher(&partial, 1, &partial, recovered) || partial != 0xa5) {
+      return false; // Accepting empty input must not accept partial blocks.
+    }
   }
   return true;
 }
