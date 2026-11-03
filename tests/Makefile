@@ -10,7 +10,7 @@ AESNI_FLAGS = -mssse3 -maes $(PCLMUL_FLAGS)
 VAES_FLAGS = $(AESNI_FLAGS) -mavx2 -mvaes
 VAES512_FLAGS = $(VAES_FLAGS) -mavx512f -mavx512bw -mavx512dq -mavx512vl
 ARM_CRYPTO_FLAGS = -march=native
-SANITIZER_FLAGS = -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+SANITIZER_FLAGS = -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
 
 # Output directories
 OUTDIR = out
@@ -21,6 +21,9 @@ TIMESTAMP := $(shell date +%Y%m%d_%H%M%S)
 # Platform detection
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
+ifneq ($(filter MINGW% MSYS% CYGWIN%,$(UNAME_S)),)
+    LDLIBS += -lbcrypt
+endif
 NATIVE_DEFINES := $(shell echo | $(CXX) -march=native -dM -E - 2>/dev/null)
 
 # Build each standalone implementation with only the flags that it requires.
@@ -107,12 +110,45 @@ WAES_SRC = test_waes.cpp
 COMPARE_SRC = compare_implementations.cpp
 
 # Common dependencies
-COMMON_DEPS = test_data.hpp test_utils.hpp test_options.hpp test_known_answers.hpp test_gcm.hpp test_template.hpp test_entry.hpp
+COMMON_DEPS = test_data.hpp test_utils.hpp test_options.hpp test_known_answers.hpp test_gcm.hpp test_boundaries.hpp test_template.hpp test_entry.hpp
 WAES_DEPS = test_waes_adapter.hpp test_waes_cross.hpp test_waes_regressions.hpp
 
 .PHONY: all clean check-platform run-all run-generic run-generic-multitu run-aes-ni run-vaes run-vaes512 run-armv8 run-waes cross-compare run-perf-all run-perf-generic run-perf-aes-ni run-perf-vaes run-perf-vaes512 run-perf-armv8 run-perf-waes compare cmp-specific report-generic report-aes-ni report-vaes report-vaes512 report-armv8 report-waes report-all sanitize sanitize-generic sanitize-waes
 
-all: check-platform $(BINS) $(BUILD_CHECKS)
+# Run every C++11 smoke/heap check and test RNG failure propagation separately.
+CXX11_CHECKS = $(filter $(BINDIR)/test_cxx11_gcm_%,$(BUILD_CHECKS))
+RNG_CHECKS = $(subst test_cxx11_gcm_,test_rng_failure_,$(CXX11_CHECKS)) $(BINDIR)/test_rng_failure_waes
+
+all: check-platform $(BINS) $(BUILD_CHECKS) $(RNG_CHECKS)
+$(CXX11_CHECKS) $(RNG_CHECKS): test_backend.hpp
+
+$(BINDIR)/test_rng_failure_generic: test_rng_failure.cpp ../WAes-gen.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) $(INCLUDES) -o $@ $< $(LDLIBS)
+
+$(BINDIR)/test_rng_failure_aes_ni: test_rng_failure.cpp ../WAes-ni.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) $(AESNI_FLAGS) -DWAES_TEST_AES_NI $(INCLUDES) -o $@ $< $(LDLIBS)
+
+$(BINDIR)/test_rng_failure_vaes: test_rng_failure.cpp ../WAes-vaes.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) $(VAES_FLAGS) -DWAES_TEST_VAES $(INCLUDES) -o $@ $< $(LDLIBS)
+
+$(BINDIR)/test_rng_failure_vaes512: test_rng_failure.cpp ../WAes-vaes512.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) $(VAES512_FLAGS) -DWAES_TEST_VAES512 $(INCLUDES) -o $@ $< $(LDLIBS)
+
+$(BINDIR)/test_rng_failure_armv8: test_rng_failure.cpp ../WAes-armv8.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) $(ARM_CRYPTO_FLAGS) -DWAES_TEST_ARMV8 $(INCLUDES) -o $@ $< $(LDLIBS)
+
+$(BINDIR)/test_rng_failure_waes: test_rng_failure.cpp test_waes_adapter.hpp ../WAes.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXXFLAGS) $(WAES_TARGET_FLAGS) -DWAES_TEST_UNIFIED $(INCLUDES) -o $@ $< $(LDLIBS)
+
+.PHONY: run-build-checks
+run-build-checks: $(BUILD_CHECKS) $(RNG_CHECKS)
+	@set -e; for test in $(BUILD_CHECKS) $(RNG_CHECKS); do ./$$test; done
 
 check-platform:
 	@echo "Platform Detection:"
@@ -147,36 +183,36 @@ endif
 
 $(BINDIR)/test_generic: $(GENERIC_SRC) $(COMMON_DEPS) ../WAes-gen.hpp
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(GENERIC_SRC)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(GENERIC_SRC) $(LDLIBS)
 
 $(BINDIR)/test_generic_multitu: $(GENERIC_MULTITU_SRC) ../WAes-gen.hpp
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXX11FLAGS) $(INCLUDES) -o $@ $(GENERIC_MULTITU_SRC)
+	$(CXX) $(CXX11FLAGS) $(INCLUDES) -o $@ $(GENERIC_MULTITU_SRC) $(LDLIBS)
 
 $(BINDIR)/test_cxx11_gcm_generic: $(CXX11_GCM_SRC) ../WAes-gen.hpp
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXX11FLAGS) $(INCLUDES) -o $@ $(CXX11_GCM_SRC)
+	$(CXX) $(CXX11FLAGS) $(INCLUDES) -o $@ $(CXX11_GCM_SRC) $(LDLIBS)
 
 $(BINDIR)/test_cxx11_gcm_aes_ni: $(CXX11_GCM_SRC) ../WAes-ni.hpp
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXX11FLAGS) $(AESNI_FLAGS) $(INCLUDES) -DWAES_TEST_AES_NI -o $@ $(CXX11_GCM_SRC)
+	$(CXX) $(CXX11FLAGS) $(AESNI_FLAGS) $(INCLUDES) -DWAES_TEST_AES_NI -o $@ $(CXX11_GCM_SRC) $(LDLIBS)
 
 $(BINDIR)/test_cxx11_gcm_vaes: $(CXX11_GCM_SRC) ../WAes-vaes.hpp
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXX11FLAGS) $(VAES_FLAGS) $(INCLUDES) -DWAES_TEST_VAES -o $@ $(CXX11_GCM_SRC)
+	$(CXX) $(CXX11FLAGS) $(VAES_FLAGS) $(INCLUDES) -DWAES_TEST_VAES -o $@ $(CXX11_GCM_SRC) $(LDLIBS)
 
 $(BINDIR)/test_cxx11_gcm_vaes512: $(CXX11_GCM_SRC) ../WAes-vaes512.hpp
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXX11FLAGS) $(VAES512_FLAGS) $(INCLUDES) -DWAES_TEST_VAES512 -o $@ $(CXX11_GCM_SRC)
+	$(CXX) $(CXX11FLAGS) $(VAES512_FLAGS) $(INCLUDES) -DWAES_TEST_VAES512 -o $@ $(CXX11_GCM_SRC) $(LDLIBS)
 
 $(BINDIR)/test_cxx11_gcm_armv8: $(CXX11_GCM_SRC) ../WAes-armv8.hpp
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXX11FLAGS) $(ARM_CRYPTO_FLAGS) $(INCLUDES) -DWAES_TEST_ARMV8 -o $@ $(CXX11_GCM_SRC)
+	$(CXX) $(CXX11FLAGS) $(ARM_CRYPTO_FLAGS) $(INCLUDES) -DWAES_TEST_ARMV8 -o $@ $(CXX11_GCM_SRC) $(LDLIBS)
 
 $(BINDIR)/test_aes_ni: $(AESNI_SRC) $(COMMON_DEPS) ../WAes-ni.hpp
 ifeq ($(AES_NI_SUPPORT),yes)
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(AESNI_FLAGS) $(INCLUDES) -o $@ $(AESNI_SRC)
+	$(CXX) $(CXXFLAGS) $(AESNI_FLAGS) $(INCLUDES) -o $@ $(AESNI_SRC) $(LDLIBS)
 else
 	@echo "Skipping AES-NI test - no AES-NI support detected"
 endif
@@ -184,7 +220,7 @@ endif
 $(BINDIR)/test_vaes: $(VAES_SRC) $(COMMON_DEPS) ../WAes-vaes.hpp
 ifeq ($(VAES_SUPPORT),yes)
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(VAES_FLAGS) $(INCLUDES) -o $@ $(VAES_SRC)
+	$(CXX) $(CXXFLAGS) $(VAES_FLAGS) $(INCLUDES) -o $@ $(VAES_SRC) $(LDLIBS)
 else
 	@echo "Skipping VAES test - no VAES support detected"
 endif
@@ -192,7 +228,7 @@ endif
 $(BINDIR)/test_vaes512: $(VAES512_SRC) $(COMMON_DEPS) ../WAes-vaes512.hpp
 ifeq ($(VAES512_SUPPORT),yes)
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(VAES512_FLAGS) $(INCLUDES) -o $@ $(VAES512_SRC)
+	$(CXX) $(CXXFLAGS) $(VAES512_FLAGS) $(INCLUDES) -o $@ $(VAES512_SRC) $(LDLIBS)
 else
 	@echo "Skipping VAES512 test - no VAES512 support detected"
 endif
@@ -201,7 +237,7 @@ $(BINDIR)/test_armv8: $(ARMV8_SRC) $(COMMON_DEPS) ../WAes-armv8.hpp
 ifeq ($(PLATFORM),arm64)
 ifeq ($(ARM_CRYPTO_SUPPORT),yes)
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(ARM_CRYPTO_FLAGS) $(INCLUDES) -o $@ $(ARMV8_SRC)
+	$(CXX) $(CXXFLAGS) $(ARM_CRYPTO_FLAGS) $(INCLUDES) -o $@ $(ARMV8_SRC) $(LDLIBS)
 else
 	@echo "Skipping ARMv8 test - no ARM crypto support detected"
 endif
@@ -211,15 +247,15 @@ endif
 
 $(BINDIR)/test_waes: $(WAES_SRC) $(COMMON_DEPS) $(WAES_DEPS) ../WAes.hpp
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(WAES_TARGET_FLAGS) $(INCLUDES) -o $@ $(WAES_SRC)
+	$(CXX) $(CXXFLAGS) $(WAES_TARGET_FLAGS) $(INCLUDES) -o $@ $(WAES_SRC) $(LDLIBS)
 
 $(BINDIR)/test_generic_sanitize: $(GENERIC_SRC) $(COMMON_DEPS) ../WAes-gen.hpp
 	@mkdir -p $(BINDIR)
-	$(CXX) $(filter-out -O3,$(CXXFLAGS)) $(SANITIZER_FLAGS) $(INCLUDES) -o $@ $(GENERIC_SRC)
+	$(CXX) $(filter-out -O3,$(CXXFLAGS)) $(SANITIZER_FLAGS) $(INCLUDES) -o $@ $(GENERIC_SRC) $(LDLIBS)
 
 $(BINDIR)/test_waes_sanitize: $(WAES_SRC) $(COMMON_DEPS) $(WAES_DEPS) ../WAes.hpp
 	@mkdir -p $(BINDIR)
-	$(CXX) $(filter-out -O3,$(CXXFLAGS)) $(SANITIZER_FLAGS) $(INCLUDES) -o $@ $(WAES_SRC)
+	$(CXX) $(filter-out -O3,$(CXXFLAGS)) $(SANITIZER_FLAGS) $(INCLUDES) -o $@ $(WAES_SRC) $(LDLIBS)
 
 sanitize-generic: $(BINDIR)/test_generic_sanitize
 	./$(BINDIR)/test_generic_sanitize
@@ -234,7 +270,7 @@ compare: $(BINDIR)/compare-implementations
 
 $(BINDIR)/compare-implementations: $(COMPARE_SRC)
 	@mkdir -p $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(COMPARE_SRC)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ $(COMPARE_SRC) $(LDLIBS)
 
 # Run individual functionality tests
 run-generic: $(BINDIR)/test_generic
@@ -323,7 +359,7 @@ run-perf-waes: $(BINDIR)/test_waes
 	./$(BINDIR)/test_waes perf
 
 # Run all functionality tests
-run-all: $(BINS) $(BUILD_CHECKS)
+run-all: $(BINS) run-build-checks
 	@echo "=== Running All AES Implementation Tests ==="
 	@echo ""
 	@$(MAKE) run-generic-multitu
@@ -378,7 +414,7 @@ endif
 
 # Concise output, while still running each complete suite. pipefail preserves
 # the test executable's exit status through tail.
-quick-test: $(BINS) $(BUILD_CHECKS)
+quick-test: $(BINS) run-build-checks
 	@echo "=== Quick Test ==="
 	@echo "Testing Generic C++11 multi-TU link and GCM API..."
 	@./$(BINDIR)/test_generic_multitu
@@ -544,9 +580,33 @@ help:
 	@echo ""
 	@echo "Other:"
 	@echo "  quick-test        - Run quick test with limited output"
+	@echo "  run-build-checks  - Execute C++11 heap/API and RNG-failure checks"
+	@echo "  run-large         - Linux 2 GiB loop regression (LARGE_BYTES overrides size)"
 	@echo "  sanitize          - Run Generic and baseline WAes with ASan/UBSan"
 	@echo "  sanitize-generic  - Run Generic with ASan/UBSan"
 	@echo "  sanitize-waes     - Run baseline WAes with ASan/UBSan"
 	@echo "  check-platform    - Check platform detection"
 	@echo "  clean             - Remove all build output (rm -rf $(OUTDIR))"
 	@echo "  help              - Show this help message"
+
+
+# Deliberately opt-in: these execute billions of bytes, but alias physical storage.
+LARGE_FLAGS = $(AESNI_FLAGS)
+LARGE_DEFINE = -DWAES_TEST_AES_NI
+ifeq ($(PLATFORM),arm64)
+    LARGE_FLAGS = $(ARM_CRYPTO_FLAGS)
+    LARGE_DEFINE = -DWAES_TEST_ARMV8
+endif
+$(BINDIR)/test_large_buffers: test_large_buffers.cpp test_backend.hpp ../WAes-ni.hpp ../WAes-armv8.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXX11FLAGS) -fsanitize=undefined -fno-sanitize-recover=all $(LARGE_FLAGS) $(LARGE_DEFINE) $(INCLUDES) -o $@ $< $(LDLIBS)
+
+$(BINDIR)/test_large_buffers_waes: test_large_buffers.cpp test_backend.hpp test_waes_adapter.hpp ../WAes.hpp
+	@mkdir -p $(BINDIR)
+	$(CXX) $(CXXFLAGS) -fsanitize=undefined -fno-sanitize-recover=all $(LARGE_FLAGS) -DWAES_TEST_UNIFIED $(INCLUDES) -o $@ $< $(LDLIBS)
+
+.PHONY: run-large
+LARGE_BYTES ?= 2147483664
+run-large: $(BINDIR)/test_large_buffers $(BINDIR)/test_large_buffers_waes
+	./$(BINDIR)/test_large_buffers $(LARGE_BYTES)
+	./$(BINDIR)/test_large_buffers_waes $(LARGE_BYTES)

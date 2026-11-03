@@ -12,7 +12,7 @@ In any C++11-compatible environment, all you need is a single `hpp` header file:
 #include "WAes-gen.hpp"
 ```
 
-Yes, just include this header in your source file and you're ready to perform AES encryption and decryption. As long as the compiler supports C++11, there are no other dependencies. It can even be integrated into Objective-C++ `.mm` files, and it won't introduce any new runtime dependencies to your final application.
+The standalone headers require C++11 and no third-party libraries. They also work in Objective-C++ `.mm` files. Automatic GCM nonces use the operating system RNG; Windows builds link the system library `bcrypt` (automatically with MSVC).
 
 ## Two ways to use
 
@@ -167,11 +167,29 @@ layouts are unsupported. A payload is limited to 2^36 - 32 bytes, and the AAD
 length must not exceed floor((2^64 - 1) / 8) bytes.
 
 AAD may be reused and is copied by `SetAAD`; the nonce must never repeat with
-the same key. The automatic overload uses a thread-local `std::mt19937` seeded
-from `std::random_device`. It is a minimal convenience source, not a guarantee
-of cryptographic randomness or uniqueness. Use the explicit-nonce overload
-when nonce allocation must follow a stronger application protocol, and keep
-automatic-nonce invocations well below 2^32 messages per key.
+the same key. The automatic overload reads each nonce from the operating system:
+`BCryptGenRandom` on Windows, `getrandom` on Linux, and `getentropy` on macOS/BSD.
+It retains no process-local PRNG state that could be duplicated by `fork()`.
+Random-source failure returns `false`, sets `outLength` to zero, and leaves the
+ciphertext and `GCMResult` unchanged. Random nonces still have a collision
+probability: keep total automatic-nonce invocations across all processes/devices
+well below 2^32 per key, or use the explicit-nonce overload with a unique allocator.
+
+For a host-provided RNG (including sandboxed applications), define
+`WAES_RANDOM_BYTES(buffer, length)` before including the header. It must return
+`true` only after filling every byte, must not throw, and must be fork-safe.
+Use the same definition in every translation unit. Without an override or a
+supported OS RNG, automatic-nonce encryption returns `false`; explicit nonces
+remain supported. The default Linux API requires glibc 2.25 / Linux 3.17 or an
+equivalent libc; macOS `getentropy` requires macOS 10.12 or later.
+
+For ECB/CBC, `SumCipherLength` returns zero when the padded length would overflow
+`size_t`; `Cipher` rejects that input before accessing buffers. Zero padding of
+empty input also has length zero. In `WAes.hpp`, `bool Cipher(const I&, O&)`
+reports success explicitly, clears output on failure, and supports the same
+container for input and output. The original vector-returning overload returns
+an empty vector on failure; use the bool overload to distinguish failure from
+a valid empty result.
 
 Encryption:
 
@@ -296,9 +314,11 @@ invalid AAD arguments, and its Boolean result is returned to the caller.
 All standalone variants require at least `-std=c++11`; `-std=c++17 -O3` is recommended.
 The headers contain no exception-handling syntax and can be compiled with
 `-fno-exceptions`. In such builds, allocation failures from AAD/container
-storage and failures inside the standard `std::random_device` implementation
-follow the host standard library's no-exception failure policy; they are not
-converted into a `false` return value.
+storage follow the host standard library's no-exception failure policy; they
+are not converted into a `false` return value. RNG failures do return `false`.
+MinGW builds using automatic nonces must link with `-lbcrypt`; MSVC links it
+automatically. VAES/VAES512 objects support ordinary C++11 heap, array and
+container allocation without a custom aligned allocator.
 
 ### Unified Header (`WAes.hpp`)
 
@@ -366,7 +386,8 @@ header. See [`tests/README.md`](tests/README.md) for the full command reference.
   in-place use, state transitions, and authenticate-before-write failures
 - **Deterministic matrix**: 18 mode/key/padding configurations across 25
   boundary and multi-block lengths (1 through 271 bytes), for 450 round trips
-- **Validation cases**: 6 malformed-PKCS7 rejection tests, giving 472
+- **Boundary regressions**: 7 checks for padding-length overflow, empty plaintext and fork-safe nonces.
+- **Validation cases**: 6 malformed-PKCS7 rejection tests, giving 479
   functional checks per standalone backend
 - **Unified validation**: direct in-process comparison of every compiled and
   executable backend, plus guard-page, padding, in-place, unaligned-I/O,

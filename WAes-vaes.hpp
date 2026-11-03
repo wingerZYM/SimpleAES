@@ -4,7 +4,32 @@
 #include <cstdint>
 #include <limits>
 #include <memory.h>
-#include <random>
+// Define WAES_RANDOM_BYTES(buffer, length) before inclusion to use a host RNG.
+// It must return true only after filling every byte, and must not throw.
+#if !defined(WAES_RANDOM_BYTES)
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#define WAES_UNDEF_NOMINMAX
+#endif
+#include <windows.h>
+#include <bcrypt.h>
+#ifdef WAES_UNDEF_NOMINMAX
+#undef NOMINMAX
+#undef WAES_UNDEF_NOMINMAX
+#endif
+#if defined(_MSC_VER)
+#pragma comment(lib, "bcrypt.lib")
+#endif
+#elif defined(__linux__)
+#include <cerrno>
+#include <sys/random.h>
+#elif defined(__APPLE__)
+#include <sys/random.h>
+#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#include <unistd.h>
+#endif
+#endif
 #include <vector>
 
 #include <immintrin.h> // For AVX2 and AES-NI (256-bit VAES)
@@ -197,23 +222,32 @@ inline bool tagsEqual(const uint8_t lhs[WAesGCMTagSize],
   return difference == 0;
 }
 
-inline void randomNonce(uint8_t nonce[WAesGCMNonceSize]) {
-  static thread_local std::mt19937 generator = [] {
-    std::random_device source;
-    std::array<uint32_t, 8> seed{};
-    for (size_t i = 0; i < seed.size(); ++i) {
-      seed[i] = source();
+inline bool randomNonce(uint8_t nonce[WAesGCMNonceSize]) noexcept {
+#if defined(WAES_RANDOM_BYTES)
+  return WAES_RANDOM_BYTES(nonce, WAesGCMNonceSize);
+#elif defined(_WIN32)
+  return BCryptGenRandom(nullptr, nonce, static_cast<ULONG>(WAesGCMNonceSize),
+                         BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
+#elif defined(__linux__)
+  size_t offset = 0;
+  while (offset < WAesGCMNonceSize) {
+    const ssize_t count = getrandom(nonce + offset, WAesGCMNonceSize - offset, 0);
+    if (count < 0 && errno == EINTR) {
+      continue;
     }
-    std::seed_seq sequence(seed.begin(), seed.end());
-    return std::mt19937(sequence);
-  }();
-  for (size_t offset = 0; offset < WAesGCMNonceSize; offset += 4) {
-    const uint32_t word = generator();
-    nonce[offset] = static_cast<uint8_t>(word >> 24);
-    nonce[offset + 1] = static_cast<uint8_t>(word >> 16);
-    nonce[offset + 2] = static_cast<uint8_t>(word >> 8);
-    nonce[offset + 3] = static_cast<uint8_t>(word);
+    if (count <= 0) {
+      return false;
+    }
+    offset += static_cast<size_t>(count);
   }
+  return true;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+  return getentropy(nonce, WAesGCMNonceSize) == 0;
+#else
+  // Explicit-nonce GCM remains available on platforms without a system RNG.
+  (void)nonce;
+  return false;
+#endif
 }
 
 } // namespace waes_gcm_detail
@@ -404,17 +438,15 @@ public:
     if (normalizedLength) {
       memcpy(normalizedKey, key, normalizedLength);
     }
-    aesN<N>::keyExpansion(normalizedKey, m_w128);
-
-    // Convert 128-bit round keys to 256-bit format for AVX2
-    for (int i = 0; i <= Nr; ++i) {
-      m_w256[i] = _mm256_broadcastsi128_si256(m_w128[i]);
-    }
-
-    // Generate inverse round keys
+    __m128i roundKeys[Nr * 2] = {};
+    aesN<N>::keyExpansion(normalizedKey, roundKeys);
     for (uint8_t i = Nr + 1; i < Nr * 2; ++i) {
-      m_w128[i] = _mm_aesimc_si128(m_w128[Nr * 2 - i]);
-      m_w256[i] = _mm256_broadcastsi128_si256(m_w128[i]);
+      roundKeys[i] = _mm_aesimc_si128(roundKeys[Nr * 2 - i]);
+    }
+    for (size_t i = 0; i < Nr * 2; ++i) {
+      _mm_storeu_si128(reinterpret_cast<__m128i *>(m_w128[i]), roundKeys[i]);
+      _mm256_storeu_si256(reinterpret_cast<__m256i *>(m_w256[i]),
+                            _mm256_broadcastsi128_si256(roundKeys[i]));
     }
 
     __m128i h = _mm_setzero_si128();
@@ -423,26 +455,34 @@ public:
 
     if (iv) {
       m_mode = Mode::CBC;
-      memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
+      if (ivLength != 0) {
+        memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
+      }
     }
   }
 
+  // Returns 0 if the padded length cannot be represented by size_t.
+  // Empty zero-padded input also has length 0; Cipher distinguishes overflow.
   size_t SumCipherLength(size_t nInLen) const {
     constexpr size_t blockSize = Nb * 4;
     if (m_mode == Mode::CTR || m_mode == Mode::GCM) {
-      // CTR and GCM do not pad the payload.
       return nInLen;
-    } else if (m_padding == Padding::Zeros) {
-      return ((nInLen + blockSize - 1) / blockSize) * blockSize;
-    } else { // PKCS7
-      return ((nInLen / blockSize) + 1) * blockSize;
     }
+    const size_t remainder = nInLen % blockSize;
+    const size_t padding =
+        m_padding == Padding::Zeros && remainder == 0 ? 0 : blockSize - remainder;
+    if (nInLen > (std::numeric_limits<size_t>::max)() - padding) {
+      return 0;
+    }
+    return nInLen + padding;
   }
 
   void SetIV(const void *iv, size_t length) {
     m_mode = Mode::CBC;
     memset(&m_iv, 0, sizeof(m_iv));
-    memcpy(&m_iv, iv, length > 16 ? 16 : length);
+    if (length != 0) {
+      memcpy(&m_iv, iv, length > 16 ? 16 : length);
+    }
   }
 
   // The complete 16-byte counter is incremented as a big-endian integer
@@ -450,7 +490,9 @@ public:
   void SetCounter(const void *counter, size_t length) {
     m_mode = Mode::CTR;
     memset(&m_iv, 0, sizeof(m_iv));
-    memcpy(&m_iv, counter, length > 16 ? 16 : length);
+    if (length != 0) {
+      memcpy(&m_iv, counter, length > 16 ? 16 : length);
+    }
   }
 
   bool SetAAD(const void *aad = nullptr, size_t aadLength = 0) {
@@ -506,7 +548,10 @@ public:
   bool CipherGCM(const void *in, size_t inLength, void *out, size_t &outLength,
                  GCMResult &result) const {
     GCMResult next;
-    waes_gcm_detail::randomNonce(next.nonce.data());
+    if (!waes_gcm_detail::randomNonce(next.nonce.data())) {
+      outLength = 0;
+      return false;
+    }
     size_t tagLength = next.tag.size();
     if (!CipherGCM(in, inLength, out, outLength, next.nonce.data(),
                    next.nonce.size(), next.tag.data(), tagLength)) {
@@ -604,48 +649,62 @@ private:
     GCM,
   };
 
-  __m256i m_w256[Nr * 2] = {};
-  __m128i m_w128[Nr * 2] = {};
-  __m128i m_iv = {};
-  alignas(16) uint8_t m_gcmH[16];
+  // Byte storage keeps the object normally aligned in C++11, including in
+  // arrays, containers and make_shared. SIMD accesses use unaligned loads.
+  uint8_t m_w256[Nr * 2][32] = {};
+  uint8_t m_w128[Nr * 2][16] = {};
+  uint8_t m_iv[16] = {};
+  uint8_t m_gcmH[16];
   std::vector<uint8_t> m_aad;
   Padding m_padding;
   Mode m_mode;
 
+  __m128i loadIV() const {
+    return _mm_loadu_si128(reinterpret_cast<const __m128i *>(m_iv));
+  }
+
+  __m128i loadKey128(size_t index) const {
+    return _mm_loadu_si128(reinterpret_cast<const __m128i *>(m_w128[index]));
+  }
+
+  __m256i loadKey256(size_t index) const {
+    return _mm256_loadu_si256(reinterpret_cast<const __m256i *>(m_w256[index]));
+  }
+
   // AVX2 cipher function for 2 blocks (256-bit)
   void cipher256(__m256i &state) const {
-    state = _mm256_xor_si256(state, m_w256[0]);
+    state = _mm256_xor_si256(state, loadKey256(0));
     for (uint8_t r = 1; r < Nr; ++r) {
-      state = _mm256_aesenc_epi128(state, m_w256[r]);
+      state = _mm256_aesenc_epi128(state, loadKey256(r));
     }
-    state = _mm256_aesenclast_epi128(state, m_w256[Nr]);
+    state = _mm256_aesenclast_epi128(state, loadKey256(Nr));
   }
 
   // AVX2 inverse cipher function for 2 blocks (256-bit)
   void invCipher256(__m256i &state) const {
-    state = _mm256_xor_si256(state, m_w256[Nr]);
+    state = _mm256_xor_si256(state, loadKey256(Nr));
     for (uint8_t r = Nr + 1; r < Nr * 2; ++r) {
-      state = _mm256_aesdec_epi128(state, m_w256[r]);
+      state = _mm256_aesdec_epi128(state, loadKey256(r));
     }
-    state = _mm256_aesdeclast_epi128(state, m_w256[0]);
+    state = _mm256_aesdeclast_epi128(state, loadKey256(0));
   }
 
   // Single block cipher using AES-NI (for fallback)
   void cipher128(__m128i &state) const {
-    state = _mm_xor_si128(state, m_w128[0]);
+    state = _mm_xor_si128(state, loadKey128(0));
     for (uint8_t r = 1; r < Nr; ++r) {
-      state = _mm_aesenc_si128(state, m_w128[r]);
+      state = _mm_aesenc_si128(state, loadKey128(r));
     }
-    state = _mm_aesenclast_si128(state, m_w128[Nr]);
+    state = _mm_aesenclast_si128(state, loadKey128(Nr));
   }
 
   // Single block inverse cipher using AES-NI (for fallback)
   void invCipher128(__m128i &state) const {
-    state = _mm_xor_si128(state, m_w128[Nr]);
+    state = _mm_xor_si128(state, loadKey128(Nr));
     for (uint8_t r = Nr + 1; r < Nr * 2; ++r) {
-      state = _mm_aesdec_si128(state, m_w128[r]);
+      state = _mm_aesdec_si128(state, loadKey128(r));
     }
-    state = _mm_aesdeclast_si128(state, m_w128[0]);
+    state = _mm_aesdeclast_si128(state, loadKey128(0));
   }
 
   void cryptGCMData(const uint8_t *input, size_t length, uint8_t *output,
@@ -707,7 +766,8 @@ private:
   bool cipherECB(const void *in, size_t inLength, void *out,
                  size_t &outLength) const {
     auto nNeedLen = SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
 
@@ -754,7 +814,8 @@ private:
   bool cipherCBC(const void *in, size_t inLength, void *out,
                  size_t &outLength) const {
     auto nNeedLen = SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
 
@@ -762,7 +823,7 @@ private:
     auto input = reinterpret_cast<const __m128i *>(in);
     auto output = reinterpret_cast<__m128i *>(out);
 
-    auto state = m_iv;
+    auto state = loadIV();
     for (; len >= 16; len -= 16, ++input, ++output) {
       state = _mm_xor_si128(_mm_loadu_si128(input), state);
       cipher128(state);
@@ -815,7 +876,7 @@ private:
                          7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8);
     static const auto increment = _mm256_set_epi64x(2, 0, 2, 0);
     auto counters = _mm256_add_epi64(
-        _mm256_shuffle_epi8(_mm256_broadcastsi128_si256(m_iv), bswap_epi64),
+        _mm256_shuffle_epi8(_mm256_broadcastsi128_si256(loadIV()), bswap_epi64),
         _mm256_set_epi64x(1, 0, 0, 0));
 
     auto len = inLength;
@@ -851,7 +912,7 @@ private:
       return false;
     }
 
-    auto block = static_cast<int64_t>(inLength / 16) - 1;
+    auto block = (inLength / 16) - 1;
 
     // sum padding length
     auto state128 =
@@ -878,8 +939,17 @@ private:
     }
 
     outLength = inLength - padLen;
+    if (outLength == 0) {
+      return true;
+    }
+    if (out == nullptr) {
+      outLength = 0;
+      return false;
+    }
     uint8_t endLen = padLen ? outLength % 16 : 16;
-    memcpy(reinterpret_cast<__m128i *>(out) + block, &state128, endLen);
+    if (endLen != 0) {
+      memcpy(reinterpret_cast<__m128i *>(out) + block, &state128, endLen);
+    }
 
     auto len = inLength - 16;
     auto input = reinterpret_cast<const __m256i *>(in);
@@ -906,7 +976,7 @@ private:
       return false;
     }
 
-    auto block = static_cast<int64_t>(inLength / 16) - 1;
+    auto block = (inLength / 16) - 1;
     auto input128 = reinterpret_cast<const __m128i *>(in);
 
     // sum padding length
@@ -919,7 +989,7 @@ private:
       iv = _mm_loadu_si128(
           reinterpret_cast<const __m128i *>(input128 + block - 1));
     } else {
-      iv = m_iv;
+      iv = loadIV();
     }
     state128 = _mm_xor_si128(state128, iv);
 
@@ -943,16 +1013,25 @@ private:
     }
 
     outLength = inLength - padLen;
+    if (outLength == 0) {
+      return true;
+    }
+    if (out == nullptr) {
+      outLength = 0;
+      return false;
+    }
     uint8_t endLen = padLen ? outLength % 16 : 16;
-    memcpy(reinterpret_cast<__m128i *>(out) + block, &state128, endLen);
+    if (endLen != 0) {
+      memcpy(reinterpret_cast<__m128i *>(out) + block, &state128, endLen);
+    }
 
     auto input256 = reinterpret_cast<const __m256i *>(in);
     auto output256 = reinterpret_cast<__m256i *>(out);
     auto piv256 = reinterpret_cast<const __m256i *>(input128 + 1);
 
     auto len = inLength - 16;
-    auto ivs = _mm256_setr_m128i(m_iv, _mm_loadu_si128(input128));
-    __m128i previous = m_iv;
+    auto ivs = _mm256_setr_m128i(loadIV(), _mm_loadu_si128(input128));
+    __m128i previous = loadIV();
     for (; len >= 32; len -= 32, ++input256, ++output256, ++piv256) {
       auto state256 = _mm256_loadu_si256(input256);
       previous = _mm256_extracti128_si256(state256, 1);

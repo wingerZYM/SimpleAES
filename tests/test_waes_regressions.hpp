@@ -174,6 +174,34 @@ inline bool testScopedAAD(WAes::Backend backend) {
          restoredCBC;
 }
 
+inline bool testContainerFailures(WAes::Backend backend) {
+  const uint8_t key[16] = {};
+  auto aes = WAes::Create<128>(backend, key, sizeof(key));
+  if (!aes) {
+    return false;
+  }
+  const std::vector<uint8_t> input(17, 0x42);
+  std::vector<uint8_t> output{0xa5};
+  const auto expected = aes->Cipher(input);
+  if (expected.size() != 32 || !aes->Cipher(input, output) || output != expected) {
+    return false;
+  }
+  auto inplace = input;
+  if (!aes->Cipher(inplace, inplace) || inplace != expected) {
+    return false;
+  }
+  const std::vector<uint8_t> empty;
+  if (!aes->Cipher(empty, output) || output.size() != 16) {
+    return false;
+  }
+  if (!aes->SetAAD() || !aes->Cipher(input).empty() ||
+      aes->Cipher(input, output) || !output.empty()) {
+    return false;
+  }
+  aes->SetCounter(key, sizeof(key));
+  return aes->Cipher(empty, output) && output.empty();
+}
+
 inline bool run() {
   using namespace TestData;
 
@@ -395,6 +423,7 @@ inline bool run() {
     }
     check(ctrOk && ctrCipher == expected, name + " CTR full-128 carry policy");
     check(testScopedAAD(backend), name + " scoped AAD state restoration");
+    check(testContainerFailures(backend), name + " container success/failure and aliasing");
   }
 
   std::array<uint8_t, 16> serializedCounter = {

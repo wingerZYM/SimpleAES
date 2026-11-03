@@ -4,7 +4,32 @@
 #include <cstdint>
 #include <limits>
 #include <memory.h>
-#include <random>
+// Define WAES_RANDOM_BYTES(buffer, length) before inclusion to use a host RNG.
+// It must return true only after filling every byte, and must not throw.
+#if !defined(WAES_RANDOM_BYTES)
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#define WAES_UNDEF_NOMINMAX
+#endif
+#include <windows.h>
+#include <bcrypt.h>
+#ifdef WAES_UNDEF_NOMINMAX
+#undef NOMINMAX
+#undef WAES_UNDEF_NOMINMAX
+#endif
+#if defined(_MSC_VER)
+#pragma comment(lib, "bcrypt.lib")
+#endif
+#elif defined(__linux__)
+#include <cerrno>
+#include <sys/random.h>
+#elif defined(__APPLE__)
+#include <sys/random.h>
+#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#include <unistd.h>
+#endif
+#endif
 #include <vector>
 
 #include <arm_neon.h>
@@ -185,23 +210,32 @@ inline bool tagsEqual(const uint8_t lhs[WAesGCMTagSize],
   return difference == 0;
 }
 
-inline void randomNonce(uint8_t nonce[WAesGCMNonceSize]) {
-  static thread_local std::mt19937 generator = [] {
-    std::random_device source;
-    std::array<uint32_t, 8> seed{};
-    for (size_t i = 0; i < seed.size(); ++i) {
-      seed[i] = source();
+inline bool randomNonce(uint8_t nonce[WAesGCMNonceSize]) noexcept {
+#if defined(WAES_RANDOM_BYTES)
+  return WAES_RANDOM_BYTES(nonce, WAesGCMNonceSize);
+#elif defined(_WIN32)
+  return BCryptGenRandom(nullptr, nonce, static_cast<ULONG>(WAesGCMNonceSize),
+                         BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
+#elif defined(__linux__)
+  size_t offset = 0;
+  while (offset < WAesGCMNonceSize) {
+    const ssize_t count = getrandom(nonce + offset, WAesGCMNonceSize - offset, 0);
+    if (count < 0 && errno == EINTR) {
+      continue;
     }
-    std::seed_seq sequence(seed.begin(), seed.end());
-    return std::mt19937(sequence);
-  }();
-  for (size_t offset = 0; offset < WAesGCMNonceSize; offset += 4) {
-    const uint32_t word = generator();
-    nonce[offset] = static_cast<uint8_t>(word >> 24);
-    nonce[offset + 1] = static_cast<uint8_t>(word >> 16);
-    nonce[offset + 2] = static_cast<uint8_t>(word >> 8);
-    nonce[offset + 3] = static_cast<uint8_t>(word);
+    if (count <= 0) {
+      return false;
+    }
+    offset += static_cast<size_t>(count);
   }
+  return true;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+  return getentropy(nonce, WAesGCMNonceSize) == 0;
+#else
+  // Explicit-nonce GCM remains available on platforms without a system RNG.
+  (void)nonce;
+  return false;
+#endif
 }
 
 } // namespace waes_gcm_detail
@@ -458,22 +492,28 @@ public:
     if (iv) // iv padding zero
     {
       m_mode = Mode::CBC;
-      memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
+      if (ivLength != 0) {
+        memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
+      }
     }
   }
 
   ~CWAes() = default;
 
+  // Returns 0 if the padded length cannot be represented by size_t.
+  // Empty zero-padded input also has length 0; Cipher distinguishes overflow.
   size_t SumCipherLength(size_t nInLen) const {
     constexpr size_t blockSize = Nb * 4;
     if (m_mode == Mode::CTR || m_mode == Mode::GCM) {
-      // CTR and GCM do not pad the payload.
       return nInLen;
-    } else if (m_padding == Padding::Zeros) {
-      return ((nInLen + blockSize - 1) / blockSize) * blockSize;
-    } else { // PKCS7
-      return ((nInLen / blockSize) + 1) * blockSize;
     }
+    const size_t remainder = nInLen % blockSize;
+    const size_t padding =
+        m_padding == Padding::Zeros && remainder == 0 ? 0 : blockSize - remainder;
+    if (nInLen > (std::numeric_limits<size_t>::max)() - padding) {
+      return 0;
+    }
+    return nInLen + padding;
   }
 
   // Sets the initialization vector when in CBC mode.
@@ -481,7 +521,9 @@ public:
   void SetIV(const void *iv, size_t length) {
     m_mode = Mode::CBC;
     memset(&m_iv, 0, sizeof(m_iv));
-    memcpy(&m_iv, iv, length > 16 ? 16 : length);
+    if (length != 0) {
+      memcpy(&m_iv, iv, length > 16 ? 16 : length);
+    }
   }
 
   // Sets the counter block when in CTR mode. The complete 16-byte value is
@@ -490,7 +532,9 @@ public:
   void SetCounter(const void *counter, size_t length) {
     m_mode = Mode::CTR;
     memset(&m_iv, 0, sizeof(m_iv));
-    memcpy(&m_iv, counter, length > 16 ? 16 : length);
+    if (length != 0) {
+      memcpy(&m_iv, counter, length > 16 ? 16 : length);
+    }
   }
 
   bool SetAAD(const void *aad = nullptr, size_t aadLength = 0) {
@@ -546,7 +590,10 @@ public:
   bool CipherGCM(const void *in, size_t inLength, void *out, size_t &outLength,
                  GCMResult &result) const {
     GCMResult next;
-    waes_gcm_detail::randomNonce(next.nonce.data());
+    if (!waes_gcm_detail::randomNonce(next.nonce.data())) {
+      outLength = 0;
+      return false;
+    }
     size_t tagLength = next.tag.size();
     if (!CipherGCM(in, inLength, out, outLength, next.nonce.data(),
                    next.nonce.size(), next.tag.data(), tagLength)) {
@@ -684,7 +731,8 @@ private:
   bool cipherECB(const void *in, size_t inLength, void *out,
                  size_t &outLength) const {
     auto nNeedLen = SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
 
@@ -719,7 +767,8 @@ private:
   bool cipherCBC(const void *in, size_t inLength, void *out,
                  size_t &outLength) const {
     auto nNeedLen = SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
 
@@ -777,10 +826,10 @@ private:
     static const uint64x2_t one = {0, 1};
     auto counter = vreinterpretq_u64_u8(vrev64q_u8(m_iv));
 
-    int64_t len = inLength / 16;
+    size_t len = inLength / 16;
     auto input = reinterpret_cast<const uint8_t *>(in);
     auto output = reinterpret_cast<uint8_t *>(out);
-    for (int64_t i = 0; i < len; ++i, input += 16, output += 16) {
+    for (size_t i = 0; i < len; ++i, input += 16, output += 16) {
       auto state = vrev64q_u8(vreinterpretq_u8_u64(counter));
       cipher(state);
       vst1q_u8(output, veorq_u8(vld1q_u8(input), state));
@@ -810,7 +859,7 @@ private:
       return false;
     }
 
-    auto len = static_cast<int64_t>(inLength) - 16;
+    auto len = inLength - 16;
     auto input = reinterpret_cast<const uint8_t *>(in);
 
     // sum padding length
@@ -837,11 +886,20 @@ private:
     }
 
     outLength = inLength - padLen;
+    if (outLength == 0) {
+      return true;
+    }
+    if (out == nullptr) {
+      outLength = 0;
+      return false;
+    }
     uint8_t endLen = padLen ? outLength % 16 : 16;
     auto output = reinterpret_cast<uint8_t *>(out);
-    memcpy(output + len, reinterpret_cast<uint8_t *>(&state), endLen);
+    if (endLen != 0) {
+      memcpy(output + len, reinterpret_cast<uint8_t *>(&state), endLen);
+    }
 
-    for (int i = 0; i < len; i += 16, input += 16, output += 16) {
+    for (size_t i = 0; i < len; i += 16, input += 16, output += 16) {
       state = vld1q_u8(input);
       invCipher(state);
       vst1q_u8(output, state);
@@ -857,7 +915,7 @@ private:
       return false;
     }
 
-    auto len = static_cast<int64_t>(inLength) - 16;
+    auto len = inLength - 16;
     auto input = reinterpret_cast<const uint8_t *>(in);
 
     // sum padding length
@@ -892,12 +950,21 @@ private:
     }
 
     outLength = inLength - padLen;
+    if (outLength == 0) {
+      return true;
+    }
+    if (out == nullptr) {
+      outLength = 0;
+      return false;
+    }
     uint8_t endLen = padLen ? outLength % 16 : 16;
     auto output = reinterpret_cast<uint8_t *>(out);
-    memcpy(output + len, &state, endLen);
+    if (endLen != 0) {
+      memcpy(output + len, &state, endLen);
+    }
 
     iv = m_iv;
-    for (int i = 0; i < len; i += 16, input += 16, output += 16) {
+    for (size_t i = 0; i < len; i += 16, input += 16, output += 16) {
       auto niv = state = vld1q_u8(input);
       invCipher(state);
       vst1q_u8(output, veorq_u8(state, iv));

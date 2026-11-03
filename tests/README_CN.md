@@ -24,7 +24,11 @@
 - `test_generic.cpp` - 通用AES实现测试 (WAes-gen.hpp)
 - `test_generic_multitu_main.cpp` - Generic C++11 多翻译单元链接测试入口
 - `test_generic_multitu.cpp` - Generic 头文件的第二翻译单元及链接测试
-- `test_cxx11_gcm.cpp` - 所有独立头文件的 C++11 GCM API 烟测
+- `test_cxx11_gcm.cpp` - 所有独立头文件的 C++11 GCM API 及堆/容器分配检查
+- `test_boundaries.hpp` - 长度溢出、空明文及 fork 回归
+- `test_rng_failure.cpp` - 宿主随机源失败与显式 nonce 可用性检查
+- `test_large_buffers.cpp` - 可选 Linux 大缓冲区 UBSan 回归
+- `test_backend.hpp` - 专项测试共用的后端选择
 - `test_aes_ni.cpp` - AES-NI指令集实现测试 (WAes-ni.hpp) [仅x86-64]
 - `test_vaes.cpp` - VAES指令集实现测试 (WAes-vaes.hpp) [仅x86-64]
 - `test_vaes512.cpp` - VAES512指令集实现测试 (WAes-vaes512.hpp) [仅x86-64]
@@ -52,14 +56,23 @@ out/
 - 10 个标准答案加解密向量
 - 1 个与 OpenSSL 兼容的 CTR 计数器完整进位向量
 - 5 个 GCM 行为与失败路径专项测试
+- 7 项边界检查：填充长度溢出、ECB/CBC 空明文、fork 后 nonce（Windows 跳过 fork）
 - 450 次确定性往返测试：18 种模式/密钥/填充配置乘以 25 种边界和多块长度
 - 6 个确定性非法 PKCS7 拒绝测试
 - 任意正确性测试失败时返回非零进程退出码
 - 所有测试目标均使用 `-fno-exceptions` 编译
 
-因此，每个独立后端共有 472 项功能检查。统一测试还会运行相同的共享测试，
+因此，每个独立后端共有 479 项功能检查。统一测试还会运行相同的共享测试，
 直接交叉验证所有可用后端，并执行后端可用性、guard page、填充、原地操作、
-非对齐 I/O、作用域 AAD 恢复和 CTR 计数器 128 位完整进位回归测试。
+非对齐 I/O、作用域 AAD 恢复、容器失败传递和 CTR 计数器 128 位完整进位回归测试。
+
+`make run-build-checks` 执行所有可用独立后端的 C++11 GCM/堆分配测试（new、数组、
+vector、make_shared 和嵌套成员），以及独立和统一接口的随机源失败注入测试。
+`run-all` 和 `quick-test` 已包含这些检查。64 位 Linux 下，`make run-large`
+使用重复的 1 MiB 映射，在 UBSan 下运行独立和统一 AES-NI/ARMv8 的 ECB/CBC
+跨 2 GiB 解密；`make run-large LARGE_BYTES=34359738384` 检查 AES-NI 的 32 GiB
+边界。这些耗时测试需手动开启。VAES512/ARM 的运行需要对应硬件，交叉编译不能
+替代运行验证。
 
 ### AES模式
 - **ECB模式** - 电子密码本模式

@@ -27,7 +27,11 @@ on the current machine and compares them directly in one process.
 - `test_generic.cpp` - Generic AES implementation test (WAes-gen.hpp)
 - `test_generic_multitu_main.cpp` - Entry point for the C++11 multi-TU link test
 - `test_generic_multitu.cpp` - Second translation unit for Generic header/link testing
-- `test_cxx11_gcm.cpp` - C++11 GCM API smoke test for every standalone header
+- `test_cxx11_gcm.cpp` - C++11 GCM API and heap/container allocation checks for every standalone header
+- `test_boundaries.hpp` - Length overflow, empty payload and fork regressions
+- `test_rng_failure.cpp` - Host RNG failure propagation and explicit-nonce fallback
+- `test_large_buffers.cpp` - Optional Linux large-buffer UBSan regression
+- `test_backend.hpp` - Backend selection shared by targeted test executables
 - `test_aes_ni.cpp` - AES-NI instruction set implementation test (WAes-ni.hpp) [x86-64 only]
 - `test_vaes.cpp` - VAES instruction set implementation test (WAes-vaes.hpp) [x86-64 only]
 - `test_vaes512.cpp` - VAES512 instruction set implementation test (WAes-vaes512.hpp) [x86-64 only]
@@ -55,16 +59,26 @@ Each standalone implementation tests:
 - 10 standard known-answer encryption/decryption vectors
 - 1 OpenSSL-compatible full-width CTR carry vector
 - 5 focused GCM behavior and failure tests
+- 7 boundary checks: padded-length overflow, empty ECB/CBC plaintext, and forked nonces (fork skipped on Windows)
 - 450 deterministic round trips: 18 mode/key/padding configurations across
   25 boundary and multi-block lengths
 - 6 deterministic malformed-PKCS7 rejection cases
 - A nonzero process exit code when any correctness check fails
 - All test targets compile with `-fno-exceptions`
 
-That gives 472 functional checks per standalone backend. The unified test also
+That gives 479 functional checks per standalone backend. The unified test also
 runs the same shared suite, directly cross-validates its available backends, and
 runs backend availability, guard-page, padding, in-place, unaligned-I/O,
-scoped-AAD restoration, and full-128-bit CTR counter regressions.
+scoped-AAD restoration, container failure propagation, and full-128-bit CTR counter regressions.
+
+`make run-build-checks` executes the C++11 GCM/heap tests (new, arrays, vector,
+make_shared and enclosing members) and injected RNG-failure checks for each available
+standalone backend and the unified RNG API. `run-all` and `quick-test` include these.
+On 64-bit Linux, `make run-large` runs the standalone and unified AES-NI/ARMv8
+ECB/CBC loops across 2 GiB under UBSan using repeated 1 MiB mappings.
+Use `make run-large LARGE_BYTES=34359738384` to cross the AES-NI 32 GiB boundary;
+these slower tests are intentionally opt-in. VAES512/ARM require a capable target
+for execution; cross-compilation alone does not validate their runtime behavior.
 
 ### AES Modes
 - **ECB Mode** - Electronic Codebook mode

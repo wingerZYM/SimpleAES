@@ -33,7 +33,32 @@
 #include <cstring>
 #include <limits>
 #include <memory>
-#include <random>
+// Define WAES_RANDOM_BYTES(buffer, length) before inclusion to use a host RNG.
+// It must return true only after filling every byte, and must not throw.
+#if !defined(WAES_RANDOM_BYTES)
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#define WAES_UNDEF_NOMINMAX
+#endif
+#include <windows.h>
+#include <bcrypt.h>
+#ifdef WAES_UNDEF_NOMINMAX
+#undef NOMINMAX
+#undef WAES_UNDEF_NOMINMAX
+#endif
+#if defined(_MSC_VER)
+#pragma comment(lib, "bcrypt.lib")
+#endif
+#elif defined(__linux__)
+#include <cerrno>
+#include <sys/random.h>
+#elif defined(__APPLE__)
+#include <sys/random.h>
+#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#include <unistd.h>
+#endif
+#endif
 #include <span>
 #include <vector>
 
@@ -333,23 +358,32 @@ inline bool gcmTagsEqual(const uint8_t lhs[GCMTagSize],
   return difference == 0;
 }
 
-inline void gcmRandomNonce(uint8_t nonce[GCMNonceSize]) {
-  static thread_local std::mt19937 generator = [] {
-    std::random_device source;
-    std::array<uint32_t, 8> seed{};
-    for (size_t i = 0; i < seed.size(); ++i) {
-      seed[i] = source();
+inline bool gcmRandomNonce(uint8_t nonce[GCMNonceSize]) noexcept {
+#if defined(WAES_RANDOM_BYTES)
+  return WAES_RANDOM_BYTES(nonce, GCMNonceSize);
+#elif defined(_WIN32)
+  return BCryptGenRandom(nullptr, nonce, static_cast<ULONG>(GCMNonceSize),
+                         BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
+#elif defined(__linux__)
+  size_t offset = 0;
+  while (offset < GCMNonceSize) {
+    const ssize_t count = getrandom(nonce + offset, GCMNonceSize - offset, 0);
+    if (count < 0 && errno == EINTR) {
+      continue;
     }
-    std::seed_seq sequence(seed.begin(), seed.end());
-    return std::mt19937(sequence);
-  }();
-  for (size_t offset = 0; offset < GCMNonceSize; offset += 4) {
-    const uint32_t word = generator();
-    nonce[offset] = static_cast<uint8_t>(word >> 24);
-    nonce[offset + 1] = static_cast<uint8_t>(word >> 16);
-    nonce[offset + 2] = static_cast<uint8_t>(word >> 8);
-    nonce[offset + 3] = static_cast<uint8_t>(word);
+    if (count <= 0) {
+      return false;
+    }
+    offset += static_cast<size_t>(count);
   }
+  return true;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+  return getentropy(nonce, GCMNonceSize) == 0;
+#else
+  // Explicit-nonce GCM remains available on platforms without a system RNG.
+  (void)nonce;
+  return false;
+#endif
 }
 
 class Aes {
@@ -627,16 +661,20 @@ public:
     return WithScopeAAD(aad.data(), aad.size(), std::forward<Func>(func));
   }
 
+  // Returns 0 if the padded length cannot be represented by size_t.
+  // Empty zero-padded input also has length 0; Cipher distinguishes overflow.
   size_t SumCipherLength(size_t nInLen) const {
     constexpr size_t blockSize = Nb * 4;
     if (m_mode == Mode::CTR || m_mode == Mode::GCM) {
-      // CTR and GCM do not pad the payload.
       return nInLen;
-    } else if (m_padding == Padding::Zeros) {
-      return ((nInLen + blockSize - 1) / blockSize) * blockSize;
-    } else { // PKCS7
-      return ((nInLen / blockSize) + 1) * blockSize;
     }
+    const size_t remainder = nInLen % blockSize;
+    const size_t padding =
+        m_padding == Padding::Zeros && remainder == 0 ? 0 : blockSize - remainder;
+    if (nInLen > (std::numeric_limits<size_t>::max)() - padding) {
+      return 0;
+    }
+    return nInLen + padding;
   }
 
   // Sets the initialization vector value when in CBC mode.
@@ -720,7 +758,10 @@ public:
   bool CipherGCM(const void *in, size_t inLength, void *out, size_t &outLength,
                  GCMResult &result) const {
     GCMResult next;
-    gcmRandomNonce(next.nonce.data());
+    if (!gcmRandomNonce(next.nonce.data())) {
+      outLength = 0;
+      return false;
+    }
     size_t tagLength = next.tag.size();
     if (!CipherGCM(in, inLength, out, outLength, next.nonce.data(),
                    next.nonce.size(), next.tag.data(), tagLength)) {
@@ -781,10 +822,29 @@ public:
     return false;
   }
 
+  template <typename I, typename O> bool Cipher(const I &in, O &out) const {
+    size_t outputLength = SumCipherLength(in.size());
+    if (m_mode == Mode::GCM || outputLength < in.size()) {
+      out.clear();
+      return false;
+    }
+    // A temporary also permits Cipher(buffer, buffer) without invalidating input.
+    O next;
+    next.resize(outputLength);
+    if (!Cipher(in.data(), in.size(), next.data(), outputLength)) {
+      out.clear();
+      return false;
+    }
+    next.resize(outputLength);
+    out.swap(next);
+    return true;
+  }
+
+  // Empty output can mean failure or a successful empty CTR/zero-padded message.
+  // Use the bool overload when the distinction matters.
   template <typename I> std::vector<uint8_t> Cipher(const I &in) const {
-    auto nNeedLen = SumCipherLength(in.size());
-    std::vector<uint8_t> out(nNeedLen);
-    Cipher(in.data(), in.size(), out.data(), nNeedLen);
+    std::vector<uint8_t> out;
+    Cipher(in, out);
     return out;
   }
 
@@ -1011,7 +1071,9 @@ private:
 
     if (iv) { // iv padding zero
       m_mode = Mode::CBC;
-      memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
+      if (ivLength != 0) {
+        memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
+      }
     }
   }
 
@@ -1047,7 +1109,8 @@ private:
   virtual bool cipherECB(const void *in, size_t inLength, void *out,
                          size_t &outLength) const override {
     auto nNeedLen = SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
     outLength = nNeedLen;
@@ -1065,7 +1128,7 @@ private:
     // Padding
     if (len || Padding::PKCS7 == m_padding) {
       alignas(16) uint8_t block[16] = {};
-      if (len) {
+      if (len != 0) {
         memcpy(block, input, len);
       }
       auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<int>(len);
@@ -1082,7 +1145,8 @@ private:
   virtual bool cipherCBC(const void *in, size_t inLength, void *out,
                          size_t &outLength) const override {
     auto nNeedLen = SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
     outLength = nNeedLen;
@@ -1132,10 +1196,10 @@ private:
     static const uint64x2_t one = {0, 1};
     auto counter = vreinterpretq_u64_u8(vrev64q_u8(m_iv));
 
-    int64_t len = inLength / 16;
+    size_t len = inLength / 16;
     auto input = reinterpret_cast<const uint8_t *>(in);
     auto output = reinterpret_cast<uint8_t *>(out);
-    for (int64_t i = 0; i < len; ++i, input += 16, output += 16) {
+    for (size_t i = 0; i < len; ++i, input += 16, output += 16) {
       auto state = vrev64q_u8(vreinterpretq_u8_u64(counter));
       cipher(state);
       vst1q_u8(output, veorq_u8(vld1q_u8(input), state));
@@ -1164,7 +1228,7 @@ private:
       return false;
     }
 
-    auto len = static_cast<int64_t>(inLength - 16);
+    auto len = (inLength - 16);
     auto input = reinterpret_cast<const uint8_t *>(in);
 
     // sum padding length
@@ -1191,11 +1255,20 @@ private:
     }
 
     outLength = inLength - padLen;
+    if (outLength == 0) {
+      return true;
+    }
+    if (out == nullptr) {
+      outLength = 0;
+      return false;
+    }
     uint8_t endLen = padLen ? outLength % 16 : 16;
     auto output = reinterpret_cast<uint8_t *>(out);
-    memcpy(output + len, &state, endLen);
+    if (endLen != 0) {
+      memcpy(output + len, &state, endLen);
+    }
 
-    for (int i = 0; i < len; i += 16, input += 16, output += 16) {
+    for (size_t i = 0; i < len; i += 16, input += 16, output += 16) {
       state = vld1q_u8(input);
       invCipher(state);
       vst1q_u8(output, state);
@@ -1211,7 +1284,7 @@ private:
       return false;
     }
 
-    auto len = static_cast<int64_t>(inLength - 16);
+    auto len = (inLength - 16);
     auto input = reinterpret_cast<const uint8_t *>(in);
 
     // sum padding length
@@ -1246,12 +1319,21 @@ private:
     }
 
     outLength = inLength - padLen;
+    if (outLength == 0) {
+      return true;
+    }
+    if (out == nullptr) {
+      outLength = 0;
+      return false;
+    }
     uint8_t endLen = padLen ? outLength % 16 : 16;
     auto output = reinterpret_cast<uint8_t *>(out);
-    memcpy(output + len, &state, endLen);
+    if (endLen != 0) {
+      memcpy(output + len, &state, endLen);
+    }
 
     iv = m_iv;
-    for (int i = 0; i < len; i += 16, input += 16, output += 16) {
+    for (size_t i = 0; i < len; i += 16, input += 16, output += 16) {
       auto niv = state = vld1q_u8(input);
       invCipher(state);
       vst1q_u8(output, veorq_u8(state, iv));
@@ -1264,7 +1346,9 @@ private:
 
   virtual void setIVImpl(const void *iv, size_t length) override {
     memset(&m_iv, 0, sizeof(m_iv));
-    memcpy(&m_iv, iv, length > 16 ? 16 : length);
+    if (length != 0) {
+      memcpy(&m_iv, iv, length > 16 ? 16 : length);
+    }
   }
 
   virtual void getIVImpl(void *iv) const override { memcpy(iv, &m_iv, 16); }
@@ -1525,7 +1609,9 @@ protected:
 
     if (iv) { // iv padding zero
       m_mode = Mode::CBC;
-      memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
+      if (ivLength != 0) {
+        memcpy(&m_iv, iv, ivLength > 16 ? 16 : ivLength);
+      }
     }
   }
 
@@ -1565,7 +1651,7 @@ protected:
   void paddingECB(size_t len, const __m128i *input, __m128i *output) const {
     if (len || Padding::PKCS7 == m_padding) {
       alignas(16) uint8_t block[16] = {};
-      if (len) {
+      if (len != 0) {
         memcpy(block, input, len);
       }
       auto pad = Padding::Zeros == m_padding ? 0 : 16 - static_cast<int>(len);
@@ -1582,7 +1668,7 @@ protected:
       return false;
     }
 
-    auto block = static_cast<int64_t>(inLength / 16) - 1;
+    auto block = (inLength / 16) - 1;
     auto state = _mm_loadu_si128(reinterpret_cast<const __m128i *>(in) + block);
     invCipher(state);
 
@@ -1607,8 +1693,17 @@ protected:
     }
 
     outLength = inLength - padLen;
+    if (outLength == 0) {
+      return true;
+    }
+    if (out == nullptr) {
+      outLength = 0;
+      return false;
+    }
     uint8_t endLen = padLen ? outLength % 16 : 16;
-    memcpy(reinterpret_cast<__m128i *>(out) + block, &state, endLen);
+    if (endLen != 0) {
+      memcpy(reinterpret_cast<__m128i *>(out) + block, &state, endLen);
+    }
 
     return true;
   }
@@ -1619,7 +1714,7 @@ protected:
       return false;
     }
 
-    auto block = static_cast<int64_t>(inLength / 16) - 1;
+    auto block = (inLength / 16) - 1;
     auto input = reinterpret_cast<const __m128i *>(in);
 
     // sum padding length
@@ -1656,8 +1751,17 @@ protected:
     }
 
     outLength = inLength - padLen;
+    if (outLength == 0) {
+      return true;
+    }
+    if (out == nullptr) {
+      outLength = 0;
+      return false;
+    }
     uint8_t endLen = padLen ? outLength % 16 : 16;
-    memcpy(reinterpret_cast<__m128i *>(out) + block, &state, endLen);
+    if (endLen != 0) {
+      memcpy(reinterpret_cast<__m128i *>(out) + block, &state, endLen);
+    }
 
     return true;
   }
@@ -1665,7 +1769,8 @@ protected:
   virtual bool cipherECB(const void *in, size_t inLength, void *out,
                          size_t &outLength) const override {
     auto nNeedLen = SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
     outLength = nNeedLen;
@@ -1688,7 +1793,8 @@ protected:
   virtual bool cipherCBC(const void *in, size_t inLength, void *out,
                          size_t &outLength) const override {
     auto nNeedLen = SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
     outLength = nNeedLen;
@@ -1741,10 +1847,10 @@ protected:
 
     auto counter = _mm_shuffle_epi8(m_iv, bswap_epi64);
 
-    int64_t len = inLength / 16;
+    size_t len = inLength / 16;
     auto input = reinterpret_cast<const __m128i *>(in);
     auto output = reinterpret_cast<__m128i *>(out);
-    for (int64_t i = 0; i < len; ++i, ++input, ++output) {
+    for (size_t i = 0; i < len; ++i, ++input, ++output) {
       auto state = _mm_shuffle_epi8(counter, bswap_epi64);
       cipher(state);
       _mm_storeu_si128(output, _mm_xor_si128(_mm_loadu_si128(input), state));
@@ -1791,10 +1897,10 @@ protected:
     }
 
     __m128i niv, iv = m_iv;
-    auto len = static_cast<int64_t>(inLength / 16) - 1;
+    auto len = (inLength / 16) - 1;
     auto input = reinterpret_cast<const __m128i *>(in);
     auto output = reinterpret_cast<__m128i *>(out);
-    for (int i = 0; i < len; ++i, ++input, ++output) {
+    for (size_t i = 0; i < len; ++i, ++input, ++output) {
       auto state = niv = _mm_loadu_si128(input);
       invCipher(state);
       _mm_storeu_si128(output, _mm_xor_si128(state, iv));
@@ -1807,7 +1913,9 @@ protected:
 
   virtual void setIVImpl(const void *iv, size_t length) override {
     memset(&m_iv, 0, sizeof(m_iv));
-    memcpy(&m_iv, iv, length > 16 ? 16 : length);
+    if (length != 0) {
+      memcpy(&m_iv, iv, length > 16 ? 16 : length);
+    }
   }
 
   virtual void getIVImpl(void *iv) const override { memcpy(iv, &m_iv, 16); }
@@ -1896,7 +2004,8 @@ private:
   virtual bool cipherECB(const void *in, size_t inLength, void *out,
                          size_t &outLength) const override {
     auto nNeedLen = WAesNi<N>::SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
     outLength = nNeedLen;
@@ -2124,7 +2233,8 @@ private:
   virtual bool cipherECB(const void *in, size_t inLength, void *out,
                          size_t &outLength) const override {
     auto nNeedLen = WAesNi<N>::SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
     outLength = nNeedLen;
@@ -2858,7 +2968,9 @@ private:
       : Aes(padding) {
     if (keyLength < 4 * Nk) {
       uint8_t tk[4 * Nk] = {}; // key padding zero
-      memcpy(tk, key, keyLength);
+      if (keyLength != 0) {
+        memcpy(tk, key, keyLength);
+      }
 
       keyExpansion(tk);
     } else {
@@ -2869,7 +2981,9 @@ private:
 
     if (iv) { // iv padding zero
       m_mode = Mode::CBC;
-      memcpy(m_iv, iv, ivLength > 16 ? 16 : ivLength);
+      if (ivLength != 0) {
+        memcpy(m_iv, iv, ivLength > 16 ? 16 : ivLength);
+      }
     }
   }
 
@@ -3085,7 +3199,8 @@ private:
   virtual bool cipherECB(const void *in, size_t inLength, void *out,
                          size_t &outLength) const override {
     auto nNeedLen = SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
     outLength = nNeedLen;
@@ -3102,7 +3217,9 @@ private:
       alignas(16) uint8_t block[16];
       auto pad =
           Padding::Zeros == m_padding ? 0 : 16 - static_cast<uint8_t>(len);
-      memcpy(block, input, len);
+      if (len != 0) {
+        memcpy(block, input, len);
+      }
       memset(block + len, pad, 16 - len);
 
       cipher(block, output);
@@ -3114,7 +3231,8 @@ private:
   virtual bool cipherCBC(const void *in, size_t inLength, void *out,
                          size_t &outLength) const override {
     auto nNeedLen = SumCipherLength(inLength);
-    if (outLength < nNeedLen) {
+    if (nNeedLen < inLength || outLength < nNeedLen) {
+      outLength = 0;
       return false;
     }
     outLength = nNeedLen;
@@ -3133,7 +3251,9 @@ private:
       alignas(16) uint8_t block[16];
       auto pad =
           Padding::Zeros == m_padding ? 0 : 16 - static_cast<uint8_t>(len);
-      memcpy(block, input, len);
+      if (len != 0) {
+        memcpy(block, input, len);
+      }
       memset(block + len, pad, 16 - len);
       cipherXor(block, piv, output);
     }
@@ -3159,11 +3279,11 @@ private:
     const uint32_t ctr1 = load32LE(m_iv + 4);
 
     alignas(16) uint8_t state[4 * Nb];
-    int64_t len = inLength;
+    size_t len = inLength;
     auto input = reinterpret_cast<const uint8_t *>(in);
     auto output = reinterpret_cast<uint8_t *>(out);
 
-    for (; len > 0; len -= 16, input += 16, output += 16) {
+    for (; len > 0;) {
       cipherWords(ctr0, ctr1, byteSwap32(static_cast<uint32_t>(ctr_lo >> 32)),
                   byteSwap32(static_cast<uint32_t>(ctr_lo)), state);
 
@@ -3173,12 +3293,16 @@ private:
         store32LE(output + 8, load32LE(state + 8) ^ load32LE(input + 8));
         store32LE(output + 12, load32LE(state + 12) ^ load32LE(input + 12));
       } else {
-        for (int64_t i = 0; i < len; ++i) {
+        for (size_t i = 0; i < len; ++i) {
           output[i] = state[i] ^ input[i];
         }
       }
 
       ++ctr_lo;
+      const size_t chunk = len < 16 ? len : 16;
+      input += chunk;
+      output += chunk;
+      len -= chunk;
     }
 
     return true;
@@ -3219,10 +3343,18 @@ private:
     }
 
     outLength = inLength - padLen;
+    if (outLength == 0) {
+      return true;
+    }
+    if (out == nullptr) {
+      outLength = 0;
+      return false;
+    }
     uint8_t endLen = padLen ? outLength % 16 : 16;
     auto *outputBase = reinterpret_cast<uint8_t *>(out);
-    auto output = outputBase + inLength - 16;
-    memcpy(output, state, endLen);
+    if (endLen != 0) {
+      memcpy(outputBase + (inLength - 16), state, endLen);
+    }
 
     for (size_t offset = inLength - 16; offset != 0;) {
       offset -= 16;
@@ -3273,14 +3405,22 @@ private:
     }
 
     outLength = inLength - padLen;
+    if (outLength == 0) {
+      return true;
+    }
+    if (out == nullptr) {
+      outLength = 0;
+      return false;
+    }
     uint8_t endLen = padLen ? outLength % 16 : 16;
     auto *outputBase = reinterpret_cast<uint8_t *>(out);
-    auto output = outputBase + inLength - 16;
-    memcpy(output, state, endLen);
+    if (endLen != 0) {
+      memcpy(outputBase + (inLength - 16), state, endLen);
+    }
 
     for (size_t offset = inLength - 16; offset != 0;) {
       offset -= 16;
-      output = outputBase + offset;
+      auto output = outputBase + offset;
       invCipher(inputBase + offset, output);
 
       piv = offset ? inputBase + offset - 16 : m_iv;
@@ -3295,7 +3435,9 @@ private:
 
   virtual void setIVImpl(const void *iv, size_t length) override {
     memset(m_iv, 0, sizeof(m_iv));
-    memcpy(m_iv, iv, length > 16 ? 16 : length);
+    if (length != 0) {
+      memcpy(m_iv, iv, length > 16 ? 16 : length);
+    }
   }
 
   virtual void getIVImpl(void *iv) const override { memcpy(iv, m_iv, 16); }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "test_data.hpp"
+#include "test_boundaries.hpp"
 #include "test_gcm.hpp"
 #include "test_known_answers.hpp"
 #include "test_options.hpp"
@@ -394,6 +395,7 @@ TestSummary runImplementationTests(const std::string &implementationName,
 
   summary.merge(KnownAnswerTests::run(implementationName));
   summary.merge(GCMTests::run(implementationName));
+  summary.merge(BoundaryTests::run(implementationName));
 
   // Test configurations
   struct KeyConfig {
