@@ -7,6 +7,7 @@
 #include <array>
 #include <cstring>
 #include <iostream>
+#include <memory_resource>
 #include <string>
 #include <vector>
 
@@ -200,6 +201,78 @@ inline bool testContainerFailures(WAes::Backend backend) {
   }
   aes->SetCounter(key, sizeof(key));
   return aes->Cipher(empty, output) && output.empty();
+}
+
+inline bool testContainerAllocators(WAes::Backend backend) {
+  const uint8_t key[16] = {};
+  auto aes = WAes::Create<128>(backend, key, sizeof(key));
+  if (!aes) {
+    return false;
+  }
+  const std::vector<uint8_t> input(17, 0x42);
+  const auto expected = aes->Cipher(input);
+  if (expected.size() != 32) {
+    return false;
+  }
+
+  std::array<uint8_t, 1024> storage{};
+  std::pmr::monotonic_buffer_resource resource(
+      storage.data(), storage.size(), std::pmr::null_memory_resource());
+  std::pmr::vector<uint8_t> output(&resource);
+  // Swapping unequal allocators used to free this stack-backed allocation.
+  output.push_back(0xa5);
+  const auto matches = [&]() {
+    return output.get_allocator().resource() == &resource &&
+           output.size() == expected.size() &&
+           std::equal(output.begin(), output.end(), expected.begin());
+  };
+  if (!aes->Cipher(input, output) || !matches()) {
+    return false;
+  }
+  output.assign(input.begin(), input.end());
+  if (!aes->Cipher(output, output) || !matches()) {
+    return false;
+  }
+  if (!aes->SetAAD() || aes->Cipher(input, output) || !output.empty() ||
+      output.get_allocator().resource() != &resource) {
+    return false;
+  }
+  output.push_back(0xa5);
+  if (aes->Cipher(output, output) || !output.empty() ||
+      output.get_allocator().resource() != &resource) {
+    return false;
+  }
+  aes->SetCounter(key, sizeof(key));
+  const std::vector<uint8_t> empty;
+  return aes->Cipher(empty, output) && output.empty() &&
+         output.get_allocator().resource() == &resource;
+}
+
+inline bool testContainerWithoutAllocator(WAes::Backend backend) {
+  // A resizable contiguous output need not expose an allocator interface.
+  struct Buffer {
+    std::vector<uint8_t> bytes;
+    size_t size() const { return bytes.size(); }
+    const uint8_t *data() const { return bytes.data(); }
+    uint8_t *data() { return bytes.data(); }
+    void resize(size_t size) { bytes.resize(size); }
+    void clear() { bytes.clear(); }
+    void swap(Buffer &other) noexcept { bytes.swap(other.bytes); }
+  };
+  const uint8_t key[16] = {};
+  auto aes = WAes::Create<128>(backend, key, sizeof(key));
+  if (!aes) {
+    return false;
+  }
+  const std::vector<uint8_t> input(17, 0x42);
+  const auto expected = aes->Cipher(input);
+  Buffer output;
+  if (expected.size() != 32 || !aes->Cipher(input, output) ||
+      output.bytes != expected) {
+    return false;
+  }
+  output.bytes = input;
+  return aes->Cipher(output, output) && output.bytes == expected;
 }
 
 inline bool run() {
@@ -424,6 +497,9 @@ inline bool run() {
     check(ctrOk && ctrCipher == expected, name + " CTR full-128 carry policy");
     check(testScopedAAD(backend), name + " scoped AAD state restoration");
     check(testContainerFailures(backend), name + " container success/failure and aliasing");
+    check(testContainerAllocators(backend), name + " PMR allocator preservation");
+    check(testContainerWithoutAllocator(backend),
+          name + " allocator-free container interface");
   }
 
   std::array<uint8_t, 16> serializedCounter = {

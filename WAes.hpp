@@ -829,7 +829,14 @@ public:
       return false;
     }
     // A temporary also permits Cipher(buffer, buffer) without invalidating input.
-    O next;
+    // Non-propagating allocators must compare equal when the buffers are swapped.
+    O next = [&]() {
+      if constexpr (requires { out.get_allocator(); }) {
+        return O(out.get_allocator());
+      } else {
+        return O{};
+      }
+    }();
     next.resize(outputLength);
     if (!Cipher(in.data(), in.size(), next.data(), outputLength)) {
       out.clear();
